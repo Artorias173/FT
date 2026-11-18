@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "android_renderer.h"
 #include "vita/emulator.h"
 
 namespace {
@@ -35,7 +36,7 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_com_ft_vitaemu_NativeBridge_nativeCreate(JNIEnv*, jobject) {
     auto session = std::make_unique<Session>();
-    if (!session->emulator.init()) return 0;
+    if (!session->emulator.init(std::make_unique<AndroidRenderer>())) return 0;
     return reinterpret_cast<jlong>(session.release());
 }
 
@@ -77,10 +78,26 @@ Java_com_ft_vitaemu_NativeBridge_nativeSetSurface(JNIEnv* env, jobject, jlong ha
         ANativeWindow_release(s->window);
         s->window = nullptr;
     }
-    if (!surface) return JNI_TRUE;  // surface détruite
-    s->window = ANativeWindow_fromSurface(env, surface);
-    return s->emulator.attach_surface(s->window, static_cast<vita::u32>(width),
-                                      static_cast<vita::u32>(height));
+    if (surface) s->window = ANativeWindow_fromSurface(env, surface);
+    // Le rendu prend sa propre référence sur la fenêtre (ou la libère si nullptr).
+    return s->emulator.attach_surface(s->window, static_cast<vita::u32>(width), static_cast<vita::u32>(height));
+}
+
+JNIEXPORT void JNICALL
+Java_com_ft_vitaemu_NativeBridge_nativeMount(JNIEnv* env, jobject, jlong handle, jstring device, jstring dir) {
+    from_handle(handle)->emulator.mount(to_string(env, device), to_string(env, dir));
+}
+
+JNIEXPORT void JNICALL
+Java_com_ft_vitaemu_NativeBridge_nativeSetInput(JNIEnv*, jobject, jlong handle, jint buttons, jint lx, jint ly,
+                                                jint rx, jint ry) {
+    vita::InputState in;
+    in.buttons = static_cast<vita::u32>(buttons);
+    in.lx = static_cast<vita::u8>(lx);
+    in.ly = static_cast<vita::u8>(ly);
+    in.rx = static_cast<vita::u8>(rx);
+    in.ry = static_cast<vita::u8>(ry);
+    from_handle(handle)->emulator.set_input(in);
 }
 
 JNIEXPORT jstring JNICALL

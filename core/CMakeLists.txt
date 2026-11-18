@@ -17,6 +17,9 @@ add_library(vita_core STATIC
     src/loader/elf_loader.cpp
     src/loader/relocation.cpp
     src/hle/kernel.cpp
+    src/hle/modules_kernel.cpp
+    src/hle/modules_io.cpp
+    src/hle/modules_display_ctrl.cpp
     src/gpu/renderer.cpp
 )
 target_include_directories(vita_core PUBLIC include)
@@ -135,6 +138,21 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
                     VERBATIM)
                 list(APPEND guest_outputs ${hb_outputs})
             endforeach()
+            # Homebrew de test des modules système (vrais NID du VitaSDK).
+            set(sys_src ${guest_src}/system)
+            set(sys ${guest_dir}/system)
+            add_custom_command(
+                OUTPUT ${sys}.self
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${guest_dir}
+                COMMAND ${VITA_GUEST_CLANG} ${hb_flags} -c ${sys_src}/main.c -o ${sys}_main.o
+                COMMAND ${VITA_GUEST_CLANG} ${hb_flags} -c ${sys_src}/stubs.S -o ${sys}_stubs.o
+                COMMAND ${VITA_GUEST_LLD} -q -T ${hb_src}/homebrew.ld --no-rosegment ${sys}_main.o ${sys}_stubs.o
+                        -o ${sys}.elf
+                COMMAND ${Python3_EXECUTABLE} ${hb_tool} ${sys}.elf ${sys_src}/nids.json ${sys}.velf --fself ${sys}.self
+                        --compress
+                DEPENDS ${sys_src}/main.c ${sys_src}/stubs.S ${sys_src}/nids.json ${hb_src}/homebrew.ld ${hb_tool}
+                VERBATIM)
+            list(APPEND guest_outputs ${sys}.self)
             target_compile_definitions(vita_core_tests PRIVATE VITA_HOMEBREW_TESTS=1)
         endif()
         add_custom_target(vita_guest_programs DEPENDS ${guest_outputs})

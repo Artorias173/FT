@@ -25,6 +25,7 @@ bool Emulator::init(std::unique_ptr<Renderer> renderer) {
     cpu_->set_svc_handler([this](u32 imm, CpuState& s) { kernel_.handle_svc(imm, s); });
 
     kernel_.register_builtin_modules();
+    kernel_.set_reschedule_callback([this] { cpu_->halt(); });
     kernel_.set_exit_callback([this](s32 code) {
         cpu_->halt();
         set_status(EmuState::Stopped, "Programme terminé (code " + std::to_string(code) + ")");
@@ -34,7 +35,18 @@ bool Emulator::init(std::unique_ptr<Renderer> renderer) {
     return true;
 }
 
-LoadResult Emulator::load(const std::string& path) { return finish_load(load_executable_file(memory_, path)); }
+void Emulator::mount(const std::string& device, const std::string& host_dir) {
+    mounts_[device] = host_dir;
+    kernel_.mount(device, host_dir);
+}
+
+LoadResult Emulator::load(const std::string& path) {
+    if (!mounts_.count("app0:")) {
+        const size_t slash = path.find_last_of('/');
+        mount("app0:", slash == std::string::npos ? "." : path.substr(0, slash));
+    }
+    return finish_load(load_executable_file(memory_, path));
+}
 
 LoadResult Emulator::load(const std::vector<u8>& data) { return finish_load(load_executable(memory_, data)); }
 
@@ -64,6 +76,9 @@ LoadResult Emulator::finish_load(LoadResult result) {
     if (!memory_.map(kTrapAddr, Memory::kPageSize)) return fail("Impossible d'allouer le piège de retour");
     memory_.write<u32>(kTrapAddr, 0xEF000000 | Kernel::kSvcModuleReturn);  // svc #kSvcModuleReturn
     memory_.write<u32>(kTrapAddr + 4, 0xEAFFFFFE);                        // b .
+    memory_.write<u32>(kTrapAddr + 8, 0xEF000000 | Kernel::kSvcThreadReturn);  // svc #kSvcThreadReturn
+    memory_.write<u32>(kTrapAddr + 12, 0xEAFFFFFE);                           // b .
+    kernel_.set_thread_return_trap(kTrapAddr + 8);
     if (!memory_.map(kTlsAddr, kTlsSize)) return fail("Impossible d'allouer la TLS");
     if (mod.tls_start && mod.tls_filesz && mod.tls_filesz <= kTlsSize) {
         // Image initiale des variables TLS. La disposition exacte attendue par le
@@ -85,16 +100,72 @@ LoadResult Emulator::finish_load(LoadResult result) {
     }
 
     module_ = mod;
+    kernel_.create_main_thread(s, kStackTop - kStackSize, kStackSize, kTlsAddr);
+    loaded_thread_ = kernel_.current();
     LOG_INFO("%u stub(s) redirigé(s)", patched);
     set_status(EmuState::Loaded, result.message);
     return result;
 }
 
 CpuExit Emulator::run_slice(u64 max_instructions) {
-    const CpuExit exit = cpu_->run(max_instructions);
-    if (exit == CpuExit::Undefined || exit == CpuExit::MemoryFault)
-        set_status(EmuState::Error, cpu_->last_error());
-    return exit;
+    constexpr u64 kQuantum = 20000;  // instructions avant de passer au thread suivant
+    u64 budget = max_instructions;
+    while (true) {
+        if (kernel_.exit_requested()) return CpuExit::Halted;
+
+        // Synchronisation verticale : on présente l'image courante.
+        const u64 vblank = kernel_.now_us() / Kernel::kVblankPeriodUs;
+        if (vblank != last_vblank_) {
+            last_vblank_ = vblank;
+            present_frame();
+        }
+        if (budget == 0) return CpuExit::BudgetExhausted;
+
+        Thread* t = kernel_.schedule();
+        if (!t) {
+            if (kernel_.all_threads_finished()) {
+                set_status(EmuState::Stopped, "Tous les threads sont terminés");
+                return CpuExit::Halted;
+            }
+            const u64 wake = kernel_.next_wake_time();
+            if (wake == UINT64_MAX) {
+                set_status(EmuState::Error, "Interblocage : tous les threads attendent");
+                return CpuExit::Halted;
+            }
+            // Personne n'est prêt : on attend la prochaine échéance (par petites étapes).
+            const u64 now = kernel_.now_us();
+            if (wake > now) std::this_thread::sleep_for(std::chrono::microseconds(std::min<u64>(wake - now, 2000)));
+            if (quit_) return CpuExit::BudgetExhausted;
+            continue;
+        }
+
+        if (t != loaded_thread_) {
+            if (loaded_thread_) loaded_thread_->state = cpu_->state();
+            cpu_->state() = t->state;
+            loaded_thread_ = t;
+        }
+        const CpuExit exit = cpu_->run(std::min(budget, kQuantum));
+        budget -= std::min(budget, cpu_->executed());
+        t->state = cpu_->state();
+
+        if (exit == CpuExit::Undefined || exit == CpuExit::MemoryFault) {
+            set_status(EmuState::Error, cpu_->last_error());
+            return exit;
+        }
+        // Halted : le thread a cédé la main (attente, fin) ou le processus se termine.
+    }
+}
+
+void Emulator::present_frame() {
+    if (!renderer_) return;
+    const FrameBuffer fb = kernel_.framebuffer();
+    const u8* pixels = fb.base ? memory_.host_ptr(fb.base, fb.pitch * fb.height * 4) : nullptr;
+    if (!pixels) {
+        renderer_->present(nullptr);
+        return;
+    }
+    const Frame frame{pixels, fb.width, fb.height, fb.pitch, fb.pixel_format};
+    renderer_->present(&frame);
 }
 
 void Emulator::start() {
@@ -147,8 +218,6 @@ void Emulator::thread_main() {
 
         const CpuExit exit = run_slice();
         if (exit != CpuExit::BudgetExhausted) break;
-        // Tant que SceDisplay n'est pas émulé, on présente une image par tranche.
-        renderer_->present();
     }
 }
 

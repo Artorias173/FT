@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -22,7 +23,7 @@ class Emulator {
 public:
     // Disposition mémoire simplifiée (les adresses réelles viendront plus tard).
     static constexpr GuestAddr kStackTop = 0x80000000;
-    static constexpr GuestAddr kTrapAddr = 0x7FF00000;  // adresse de retour de module_start
+    static constexpr GuestAddr kTrapAddr = 0x7FF00000;  // retour de module_start ; +8 : retour d'un thread
     static constexpr GuestAddr kTlsAddr = 0x7FF10000;   // zone TLS du thread principal
     static constexpr u32 kTlsSize = 0x10000;
     static constexpr u32 kStackSize = 1 * 1024 * 1024;
@@ -44,8 +45,16 @@ public:
     void resume();
     void stop();
 
-    // Exécute une tranche d'instructions sur le thread appelant (tests, débogage).
+    // Exécute une tranche d'instructions sur le thread appelant (tests, débogage),
+    // en répartissant le temps entre les threads Vita prêts.
     CpuExit run_slice(u64 max_instructions = kInstructionsPerSlice);
+
+    // Commandes (appelé depuis l'interface).
+    void set_input(const InputState& input) { kernel_.set_input(input); }
+    // Associe un périphérique Vita (« ux0: ») à un dossier de l'hôte. Au
+    // chargement d'un fichier, « app0: » désigne son dossier s'il n'est pas déjà monté.
+    void mount(const std::string& device, const std::string& host_dir);
+    Renderer* renderer() { return renderer_.get(); }
 
     bool attach_surface(void* native_window, u32 width, u32 height);
 
@@ -57,6 +66,7 @@ public:
 
 private:
     LoadResult finish_load(LoadResult result);
+    void present_frame();
     void set_status(EmuState state, std::string message);
     void thread_main();
 
@@ -65,6 +75,9 @@ private:
     Kernel kernel_;
     std::unique_ptr<Renderer> renderer_;
     LoadedModule module_;
+    Thread* loaded_thread_ = nullptr;  // thread dont l'état est dans le CPU
+    u64 last_vblank_ = 0;
+    std::map<std::string, std::string> mounts_;
 
     std::thread thread_;
     std::atomic<EmuState> state_{EmuState::Idle};

@@ -48,6 +48,8 @@ public:
     virtual ~CpuBackend() = default;
 
     virtual CpuExit run(u64 max_instructions) = 0;
+    // Nombre d'instructions exécutées par le dernier appel à run().
+    u64 executed() const { return executed_; }
     virtual void halt() = 0;
     virtual CpuState& state() = 0;
     virtual const std::string& last_error() const = 0;
@@ -56,6 +58,7 @@ public:
 
 protected:
     SvcHandler svc_handler_;
+    u64 executed_ = 0;
 };
 
 }  // namespace vita

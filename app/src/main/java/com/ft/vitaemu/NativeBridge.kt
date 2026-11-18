@@ -17,4 +17,6 @@ object NativeBridge {
     external fun nativeStop(handle: Long)
     external fun nativeSetSurface(handle: Long, surface: Surface?, width: Int, height: Int): Boolean
     external fun nativeStatus(handle: Long): String
+    external fun nativeMount(handle: Long, device: String, dir: String)
+    external fun nativeSetInput(handle: Long, buttons: Int, lx: Int, ly: Int, rx: Int, ry: Int)
 }

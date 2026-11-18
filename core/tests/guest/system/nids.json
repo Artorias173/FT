@@ -1,0 +1,31 @@
+{
+    "_note": "NID des fonctions relevés dans vitasdk/vita-headers (db/360). Les NID de bibliothèque ne sont pas utilisés par l'émulateur et valent 0 ici.",
+    "module_name": "vita_test_system",
+    "libraries": [
+        {"name": "SceProcessmgr", "nid": "0x00000000", "functions": {
+            "sceKernelExitProcess": "0x7595D9AA", "sceKernelGetStdout": "0xE5AA625C"}},
+        {"name": "SceLibKernel", "nid": "0x00000000", "functions": {
+            "sceKernelGetProcessTimeWide": "0xB110C123", "sceKernelGetProcessTimeLow": "0xE9F973B1",
+            "sceKernelCreateThread": "0xC5C11EE7", "sceKernelStartThread": "0xF08DE149",
+            "sceKernelWaitThreadEnd": "0xDDB395A9", "sceKernelGetThreadId": "0x0FB972F9",
+            "sceKernelCreateLwMutex": "0xDA6EC8EF", "sceKernelLockLwMutex": "0x46E7BE7B",
+            "sceKernelUnlockLwMutex": "0x91FA6614", "sceKernelDeleteLwMutex": "0x244E76D2",
+            "sceKernelCreateSema": "0x1BD67366", "sceKernelWaitSema": "0x0C7B834B",
+            "sceIoOpen": "0x6C60AC61", "sceIoLseek": "0x99BA173E", "sceIoRemove": "0xE20ED0F3",
+            "sceIoMkdir": "0x9670D39F"}},
+        {"name": "SceThreadmgr", "nid": "0x00000000", "functions": {
+            "sceKernelExitDeleteThread": "0x1D17DECF", "sceKernelDelayThread": "0x4B675D05",
+            "sceKernelSignalSema": "0xE6B761D1", "sceKernelDeleteSema": "0xDB32948A"}},
+        {"name": "SceIofilemgr", "nid": "0x00000000", "functions": {
+            "sceIoClose": "0xC70B8886", "sceIoRead": "0xFDB32293", "sceIoWrite": "0x34EFD876"}},
+        {"name": "SceSysmem", "nid": "0x00000000", "functions": {
+            "sceKernelAllocMemBlock": "0xB9D5EBDE", "sceKernelFreeMemBlock": "0xA91E15EE",
+            "sceKernelGetMemBlockBase": "0xB8EF5818"}},
+        {"name": "SceDisplay", "nid": "0x00000000", "functions": {
+            "sceDisplaySetFrameBuf": "0x7A410B64", "sceDisplayGetFrameBuf": "0x42AE6BBC",
+            "sceDisplayWaitVblankStart": "0x5795E898"}},
+        {"name": "SceCtrl", "nid": "0x00000000", "functions": {
+            "sceCtrlSetSamplingMode": "0xA497B150", "sceCtrlPeekBufferPositive": "0xA9C3CED6"}},
+        {"name": "VitaTest", "nid": "0xFFFF0000", "functions": {"vitaTestReport": "0xFFFF0001"}}
+    ]
+}

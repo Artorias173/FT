@@ -12,10 +12,12 @@ using namespace arm;
 
 CpuExit Interpreter::run(u64 max_instructions) {
     halt_requested_ = false;
+    executed_ = 0;
     for (u64 i = 0; i < max_instructions; ++i) {
         if (halt_requested_) return CpuExit::Halted;
         const u32 pc = state_.r[15];
         if (step() == StepResult::Undefined) return CpuExit::Undefined;
+        ++executed_;
 
         GuestAddr fault = 0;
         if (memory_.take_fault(&fault)) {

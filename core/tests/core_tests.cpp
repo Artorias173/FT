@@ -1,5 +1,6 @@
 // Tests du cœur, sans dépendance externe. Lancement : ctest ou ./vita_core_tests
 #include <chrono>
+#include <filesystem>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -9,6 +10,8 @@
 #include "guest/programs.h"
 
 #include "vita/cpu/interpreter.h"
+#include <unistd.h>
+
 #include "vita/emulator.h"
 
 using namespace vita;
@@ -312,6 +315,87 @@ void test_vita_homebrew() {
 #endif
 }
 
+// Modules système : un homebrew appelle mémoire, threads, synchronisation,
+// temps, fichiers, console, commandes et affichage par leurs vrais NID.
+void test_system_modules() {
+#if !defined(VITA_GUEST_DIR) || !defined(VITA_HOMEBREW_TESTS)
+    std::printf("Modules système ignorés (clang, ld.lld ou Python introuvable)\n");
+#else
+    namespace fs = std::filesystem;
+    const fs::path ux0 = fs::temp_directory_path() / ("ft_vita_ux0_" + std::to_string(::getpid()));
+    fs::remove_all(ux0);
+    fs::create_directories(ux0 / "data");
+
+    Emulator emu;
+    CHECK(emu.init(std::make_unique<NullRenderer>(true)));
+    emu.mount("ux0:", ux0.string());
+    InputState input;
+    input.buttons = 0x4010;  // CROIX + HAUT
+    input.lx = 10; input.ly = 20; input.rx = 200; input.ry = 250;
+    emu.set_input(input);
+
+    std::vector<u32> got(32, 0xDEADDEAD);
+    emu.kernel().register_function(0xFFFF0001, "vitaTestReport", [&](CpuState& s) {
+        if (s.r[0] < got.size()) got[s.r[0]] = s.r[1];
+    });
+    const LoadResult r = emu.load(std::string(VITA_GUEST_DIR) + "/system.self");
+    CHECK(r.ok());
+    CHECK(emu.module().imports.size() == 34);
+
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(emu.run_slice(200'000'000) == CpuExit::Halted);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+
+    u32 block_sum = 0;
+    for (u32 i = 0; i < 0x4000; ++i) block_sum += i * 3;
+    const char* const msg = "Bonjour depuis la Vita !\n";
+    const u32 expected[32] = {
+        1, block_sum, 0, 1,                        // blocs mémoire
+        3003, 600,                                 // threads + mutex léger
+        1, 1, 1,                                   // sémaphores
+        1, 1, 1,                                   // temps, identifiant de thread
+        0, 12, 8, 1, 12, 0, sce_error::kBadFile, 0,  // fichiers
+        sce_error::kNoEntry, sce_error::kNoDevice, sce_error::kInvalid,
+        static_cast<u32>(std::strlen(msg)),        // console
+        0, 2, 0x4010, 10u | (20u << 8) | (200u << 16) | (250u << 24),  // commandes
+        0, 1, 1,                                   // affichage
+        75,                                        // retour d'un thread
+    };
+    static const char* const kLabels[32] = {
+        "alloc", "somme du bloc", "free", "double free", "statuts des threads", "compteur protégé", "ping-pong",
+        "thread supprimé", "sémaphore pleine", "temps (64 bits)", "temps (32 bits)", "id de thread", "mkdir", "write",
+        "lseek", "read", "lseek fin", "close", "double close", "remove", "fichier absent", "périphérique inconnu",
+        "chemin « .. »", "console", "mode d'échantillonnage", "nombre d'échantillons", "boutons", "sticks",
+        "SetFrameBuf", "GetFrameBuf", "SetFrameBuf invalide", "retour de thread"};
+    int ok = 0;
+    for (int i = 0; i < 32; ++i) {
+        if (got[i] == expected[i]) {
+            ++ok;
+        } else {
+            std::fprintf(stderr, "ÉCHEC [système] %s : 0x%08x au lieu de 0x%08x\n", kLabels[i], got[i], expected[i]);
+            ++g_failures;
+        }
+    }
+    CHECK(emu.status().find("code 123") != std::string::npos);
+    CHECK(emu.kernel().unimplemented_calls() == 0);
+    CHECK(emu.kernel().stdout_text() == msg);
+    CHECK(fs::is_directory(ux0 / "data" / "ft"));
+    CHECK(!fs::exists(ux0 / "data" / "ft" / "test.txt"));
+
+    // Image : le dégradé dessiné par le programme a été présenté.
+    const auto* renderer = static_cast<NullRenderer*>(emu.renderer());
+    CHECK(renderer->frames() >= 1);
+    CHECK(renderer->last_width() == 960 && renderer->last_height() == 544);
+    if (renderer->last_frame().size() == 960u * 544u) {
+        for (const auto [x, y] : {std::pair<u32, u32>{0, 0}, {959, 543}, {300, 200}})
+            CHECK(renderer->last_frame()[y * 960 + x] == (0xFF330000u | ((y & 0xFF) << 8) | (x & 0xFF)));
+    }
+    fs::remove_all(ux0);
+    std::printf("  system.self       %d/32 résultats corrects, %zu threads créés (%.1f ms)\n", ok,
+                emu.kernel().thread_count(), ms);
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -324,6 +408,7 @@ int main() {
     run_loader_tests();
     test_guest_programs();
     test_vita_homebrew();
+    test_system_modules();
 
     if (g_failures) {
         std::fprintf(stderr, "%d vérification(s) en échec\n", g_failures);

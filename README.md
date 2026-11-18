@@ -1,7 +1,7 @@
 # FT Vita : fondations d'un émulateur PS Vita pour Android
 
-Ce dépôt ne contient encore que les **fondations** : il fait tourner de petits
-programmes ARM homebrew, pas des jeux. L'architecture permet ensuite de
+Ce dépôt ne contient encore que les **fondations** : il exécute du code C
+compilé pour la Vita (ARM et Thumb-2, en calcul entier), mais pas encore de jeux. L'architecture permet ensuite de
 remplacer chaque brique (CPU, GPU, HLE) sans toucher aux autres.
 
 ## Architecture
@@ -15,11 +15,12 @@ core/                     Cœur d'émulation C++17 portable (Android, Linux)
     emulator.h            Orchestrateur : cycle de vie, thread d'émulation
     memory/memory.h       Espace d'adressage invité 4 Gio (mmap + mprotect)
     cpu/cpu.h             Interface CpuBackend (interpréteur aujourd'hui, dynarec demain)
-    cpu/interpreter.h     Interpréteur ARM (A32) de référence
+    cpu/interpreter.h     Interpréteur ARMv7 de référence : ARM (A32) et Thumb-2 (T32)
     loader/elf_loader.h   Chargeur ELF ARM 32 bits non chiffré
     hle/kernel.h          Émulation haut niveau des modules système (NID -> C++)
     gpu/renderer.h        Interface de rendu (NullRenderer, Vulkan à venir)
   tests/                  Tests unitaires et de bout en bout
+    guest/                Programmes C exécutés nativement ET dans l'émulateur
 ```
 
 ### Choix techniques
@@ -40,6 +41,12 @@ core/                     Cœur d'émulation C++17 portable (Android, Linux)
 cmake -S core -B core/build && cmake --build core/build -j && ctest --test-dir core/build
 ```
 
+Si `clang` et `ld.lld` sont installés, les tests compilent aussi
+`core/tests/guest/programs.c` pour un Cortex-A9, en ARM et en Thumb-2, avec
+`-O0`, `-O2` et `-Os`. Chaque programme exécuté dans l'émulateur doit donner
+exactement le même résultat que le même code compilé nativement : tri, CRC32,
+tables de sauts, champs de bits, calcul 64 bits, pointeurs de fonction, etc.
+
 **Application Android :** il faut le SDK Android et le NDK. Ouvrez le projet
 dans Android Studio, ou lancez :
 
@@ -52,7 +59,7 @@ réservation de 4 Gio d'espace d'adressage l'exige.
 
 ## Feuille de route
 
-1. **CPU** : Thumb-2 (indispensable, la majorité du code Vita est en Thumb), VFP/NEON, LDM/STM, LDREX/STREX. Brancher ensuite dynarmic.
+1. **CPU** : ~~Thumb-2~~ (fait), VFP/NEON (calcul flottant, indispensable pour les jeux), moniteur exclusif multicœur. Brancher ensuite dynarmic pour les performances.
 2. **Chargeur** : ELF relogeables `ET_SCE_RELEXEC`, résolution des imports et exports (`sceModuleInfo`), format VPK (homebrew).
 3. **HLE** : threads (SceThreadmgr), fichiers (SceIofilemgr), affichage (SceDisplay), manettes (SceCtrl), audio (SceAudio).
 4. **GPU** : `VulkanRenderer`, puis SceGxm et le traducteur de shaders.

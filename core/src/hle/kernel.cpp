@@ -15,10 +15,14 @@ void Kernel::register_function(u32 nid, std::string name, Handler handler) {
     functions_[nid] = Function{nid, std::move(name), std::move(handler)};
 }
 
+u32 Kernel::bind_svc(u32 nid) {
+    import_table_.push_back(nid);
+    return static_cast<u32>(import_table_.size() - 1);
+}
+
 bool Kernel::patch_import(GuestAddr stub_addr, u32 nid) {
     if (!memory_.is_mapped(stub_addr, 8)) return false;
-    const u32 index = static_cast<u32>(import_table_.size());
-    import_table_.push_back(nid);
+    const u32 index = bind_svc(nid);
     memory_.write<u32>(stub_addr, encode_svc(index));
     memory_.write<u32>(stub_addr + 4, kArmBxLr);
     return true;
@@ -26,7 +30,7 @@ bool Kernel::patch_import(GuestAddr stub_addr, u32 nid) {
 
 void Kernel::handle_svc(u32 imm, CpuState& state) {
     if (imm >= import_table_.size()) {
-        LOG_WARN("SVC #%u inconnu à 0x%08x", imm, state.r[15] - 4);
+        LOG_WARN("SVC #%u inconnu (retour à 0x%08x)", imm, state.r[15]);
         state.r[0] = 0x80020001;  // code d'erreur générique
         return;
     }

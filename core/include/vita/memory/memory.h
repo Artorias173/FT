@@ -54,6 +54,7 @@ public:
 
     // Vrai si un accès invalide a eu lieu depuis le dernier appel.
     bool take_fault(GuestAddr* fault_addr = nullptr);
+    bool has_fault() const { return fault_; }
 
 private:
     u8* checked(GuestAddr addr, u32 size);

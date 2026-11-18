@@ -1,7 +1,11 @@
 // Tests du cœur, sans dépendance externe. Lancement : ctest ou ./vita_core_tests
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
+
+#include "guest/programs.h"
 
 #include "vita/cpu/interpreter.h"
 #include "vita/emulator.h"
@@ -113,10 +117,10 @@ void test_flags() {
     CHECK(cpu.state().cpsr & CpuState::kFlagC);
     CHECK(cpu.state().pc() == kBase + 20);
 
-    // Instruction suivante = 0 (ANDEQ r0,r0,r0) ; Z=1 donc elle s'exécute sans effet.
-    // Une instruction Thumb doit en revanche s'arrêter proprement.
-    cpu.state().cpsr |= CpuState::kFlagT;
+    // Une instruction non définie (UDF) doit arrêter proprement l'exécution.
+    mem.write<u32>(cpu.state().pc(), 0xE7F000F0);
     CHECK(cpu.run(1) == CpuExit::Undefined);
+    CHECK(!cpu.last_error().empty());
 }
 
 // Programme complet : calcul, pile, conditions, BL vers une fonction système émulée.
@@ -168,6 +172,58 @@ void test_threaded_run() {
     CHECK(emu.cpu_state().r[0] == 42);
 }
 
+// Programmes C compilés pour Cortex-A9 (ARM et Thumb-2) : chaque résultat
+// doit être identique à celui du même code compilé nativement.
+void test_guest_programs() {
+#ifndef VITA_GUEST_DIR
+    std::printf("Programmes invités ignorés (clang ou ld.lld introuvable)\n");
+#else
+    u32 expected[VITA_TEST_COUNT];
+    for (int i = 0; i < VITA_TEST_COUNT; ++i) expected[i] = run_test(i);
+
+    constexpr u32 kExitNid = 0x7595D9AA;    // sceKernelExitProcess
+    constexpr u32 kReportNid = 0xFFFF0001;  // fonction propre aux tests
+
+    for (const char* variant : {"thumb_O0", "thumb_O2", "thumb_Os", "arm_O0", "arm_O2", "arm_Os"}) {
+        Emulator emu;
+        CHECK(emu.init());
+        const std::string path = std::string(VITA_GUEST_DIR) + "/" + variant + ".elf";
+        if (!emu.load(path).ok()) {
+            std::fprintf(stderr, "ÉCHEC : impossible de charger %s\n", path.c_str());
+            ++g_failures;
+            continue;
+        }
+
+        std::vector<u32> got(VITA_TEST_COUNT, 0xDEADDEAD);
+        emu.kernel().register_function(kReportNid, "test_report", [&](CpuState& s) {
+            if (s.r[0] < got.size()) got[s.r[0]] = s.r[1];
+        });
+        CHECK(emu.kernel().bind_svc(kExitNid) == 0);
+        CHECK(emu.kernel().bind_svc(kReportNid) == 1);
+
+        const auto start = std::chrono::steady_clock::now();
+        const CpuExit exit = emu.run_slice(200'000'000);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+
+        if (exit != CpuExit::Halted) {
+            std::fprintf(stderr, "ÉCHEC [%s] : arrêt inattendu : %s\n", variant, emu.status().c_str());
+            ++g_failures;
+        }
+        int ok = 0;
+        for (int i = 0; i < VITA_TEST_COUNT; ++i) {
+            if (got[i] == expected[i]) {
+                ++ok;
+            } else {
+                std::fprintf(stderr, "ÉCHEC [%s] %s : obtenu 0x%08x, attendu 0x%08x\n", variant, test_name(i),
+                             got[i], expected[i]);
+                ++g_failures;
+            }
+        }
+        std::printf("  %-9s %2d/%d programmes corrects (%.1f ms)\n", variant, ok, VITA_TEST_COUNT, ms);
+    }
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -176,6 +232,7 @@ int main() {
     test_flags();
     test_end_to_end();
     test_threaded_run();
+    test_guest_programs();
 
     if (g_failures) {
         std::fprintf(stderr, "%d vérification(s) en échec\n", g_failures);

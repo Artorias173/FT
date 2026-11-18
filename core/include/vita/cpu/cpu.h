@@ -16,6 +16,7 @@ struct CpuState {
     u32 fpscr = 0;
     u64 d[32]{};      // registres VFP/NEON (D0-D31)
     u32 tpidruro = 0; // registre TLS (TPIDRURO), utilisé par le système de la Vita
+    u8 itstate = 0;   // état du bloc IT en Thumb-2 (condition + masque)
 
     static constexpr u32 kFlagN = 1u << 31;
     static constexpr u32 kFlagZ = 1u << 30;

@@ -26,6 +26,9 @@ public:
 
     void register_function(u32 nid, std::string name, Handler handler);
 
+    // Associe un numéro de SVC au NID et le renvoie.
+    u32 bind_svc(u32 nid);
+
     // Remplace l'appel importé (stub) situé à `stub_addr` par une redirection vers le NID.
     bool patch_import(GuestAddr stub_addr, u32 nid);
 

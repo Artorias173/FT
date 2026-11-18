@@ -1,0 +1,20 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.cxx/
+.externalNativeBuild/
+captures/
+*.apk
+*.aab
+
+# Build du cœur en natif (hôte)
+core/build*/
+
+# Fichiers propriétaires : ne jamais committer
+*.pkg
+*.PUP
+*.vpk
+firmware/

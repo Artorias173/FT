@@ -179,18 +179,27 @@ void test_guest_programs() {
 #ifndef VITA_GUEST_DIR
     std::printf("Programmes invités ignorés (clang ou ld.lld introuvable)\n");
 #else
-    constexpr int kTotal = VITA_TEST_COUNT + VITA_FLOAT_TEST_COUNT;
+    constexpr int kWithFloat = VITA_TEST_COUNT + VITA_FLOAT_TEST_COUNT;
+    constexpr int kTotal = kWithFloat + VITA_NEON_TEST_COUNT;
     u32 expected[kTotal];
     for (int i = 0; i < VITA_TEST_COUNT; ++i) expected[i] = run_test(i);
     for (int i = 0; i < VITA_FLOAT_TEST_COUNT; ++i) expected[VITA_TEST_COUNT + i] = run_float_test(i);
-    auto name_of = [](int i) { return i < VITA_TEST_COUNT ? test_name(i) : float_test_name(i - VITA_TEST_COUNT); };
+    for (int i = 0; i < VITA_NEON_TEST_COUNT; ++i) expected[kWithFloat + i] = run_neon_test(i);
+    auto name_of = [](int i) {
+        if (i < VITA_TEST_COUNT) return test_name(i);
+        if (i < kWithFloat) return float_test_name(i - VITA_TEST_COUNT);
+        return neon_test_name(i - kWithFloat);
+    };
 
     constexpr u32 kExitNid = 0x7595D9AA;    // sceKernelExitProcess
     constexpr u32 kReportNid = 0xFFFF0001;  // fonction propre aux tests
 
     for (const char* variant : {"thumb_O0", "thumb_O2", "thumb_Os", "arm_O0", "arm_O2", "arm_Os",
-                                "thumb_O0_vfp", "thumb_O2_vfp", "arm_O2_vfp"}) {
-        const int count = std::strstr(variant, "_vfp") ? kTotal : VITA_TEST_COUNT;
+                                "thumb_O0_vfp", "thumb_O2_vfp", "arm_O2_vfp", "thumb_O0_neon", "thumb_O2_neon",
+                                "thumb_O3_neon", "arm_O2_neon", "arm_O3_neon"}) {
+        const int count = std::strstr(variant, "_neon") ? kTotal
+                          : std::strstr(variant, "_vfp") ? kWithFloat
+                                                         : VITA_TEST_COUNT;
         Emulator emu;
         CHECK(emu.init());
         const std::string path = std::string(VITA_GUEST_DIR) + "/" + variant + ".elf";

@@ -230,6 +230,14 @@ Interpreter::StepResult Interpreter::coprocessor(u32 instr) {
     return StepResult::Undefined;
 }
 
+void Interpreter::most_significant_multiply(u32 rd, u32 ra, u32 rn, u32 rm, bool subtract, bool round) {
+    const s64 product = static_cast<s64>(static_cast<s32>(state_.r[rn])) * static_cast<s32>(state_.r[rm]);
+    s64 acc = ra == 15 ? 0 : static_cast<s64>(static_cast<u64>(state_.r[ra]) << 32);
+    u64 result = subtract ? static_cast<u64>(acc) - static_cast<u64>(product) : static_cast<u64>(acc) + static_cast<u64>(product);
+    if (round) result += 0x80000000u;
+    state_.r[rd] = static_cast<u32>(result >> 32);
+}
+
 void Interpreter::halfword_multiply(u32 kind, bool n_top, bool m_top, u32 rd_hi, u32 ra_lo, u32 rn, u32 rm,
                                     bool accumulate) {
     constexpr u32 kFlagQ = 1u << 27;

@@ -17,6 +17,11 @@ const char* test_name(int index);
 unsigned run_float_test(int index);
 const char* float_test_name(int index);
 
+/* Programmes NEON : intrinsics dans l'émulateur, référence scalaire en natif. */
+#define VITA_NEON_TEST_COUNT 16
+unsigned run_neon_test(int index);
+const char* neon_test_name(int index);
+
 #ifdef __cplusplus
 }
 #endif

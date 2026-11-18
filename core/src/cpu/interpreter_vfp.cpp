@@ -243,14 +243,41 @@ Interpreter::StepResult Interpreter::vfp_transfer(u32 instr) {
         }
         return StepResult::Ok;
     }
-    if (c && !bit(instr, 22) && bits(instr, 6, 5) == 0 && !bit(instr, 23)) {  // VMOV.32 Rt <-> Dd[x]
+    if (c) {
         const u32 dd = (bit(instr, 7) << 4) | bits(instr, 19, 16);
-        const u32 lane = (dd << 1) | bit(instr, 21);
         if (rt == 15) return StepResult::Undefined;
-        if (load) r[rt] = get_s(state_, lane); else set_s(state_, lane, r[rt]);
+        if (!load && bit(instr, 23)) {  // VDUP Dd/Qd, Rt
+            const u32 be = (bit(instr, 22) << 1) | bit(instr, 5);
+            const bool q = bit(instr, 21);
+            if (be == 3 || (q && (dd & 1))) return StepResult::Undefined;
+            u64 v = r[rt];
+            if (be == 2) v = (v & 0xFF) * 0x0101010101010101ull;     // 8 bits
+            else if (be == 1) v = (v & 0xFFFF) * 0x0001000100010001ull;  // 16 bits
+            else v = (v & 0xFFFFFFFFull) * 0x0000000100000001ull;     // 32 bits
+            state_.d[dd] = v;
+            if (q) state_.d[dd + 1] = v;
+            return StepResult::Ok;
+        }
+        // VMOV Rt <-> Dd[x] : taille et index dans opc1 (bits 22:21) et opc2 (bits 6:5).
+        const u32 opc1 = bits(instr, 22, 21), opc2 = bits(instr, 6, 5);
+        u32 esize, index;
+        if (opc1 & 2) { esize = 8; index = ((opc1 & 1) << 2) | opc2; }
+        else if (opc2 & 1) { esize = 16; index = ((opc1 & 1) << 1) | (opc2 >> 1); }
+        else if (opc2 == 0) { esize = 32; index = opc1 & 1; }
+        else return StepResult::Undefined;
+        const u32 shift = index * esize;
+        const u64 mask = ((1ull << esize) - 1) << shift;
+        if (load) {
+            u32 v = static_cast<u32>((state_.d[dd] & mask) >> shift);
+            if (!bit(instr, 23) && esize < 32) v = sign_extend(v, static_cast<int>(esize));  // U = 0 : signé
+            r[rt] = v;
+        } else {
+            if (bit(instr, 23)) return StepResult::Undefined;
+            state_.d[dd] = (state_.d[dd] & ~mask) | ((static_cast<u64>(r[rt]) << shift) & mask);
+        }
         return StepResult::Ok;
     }
-    return StepResult::Undefined;  // éléments 8/16 bits, VDUP (NEON)
+    return StepResult::Undefined;
 }
 
 Interpreter::StepResult Interpreter::vfp_data_processing(u32 instr) {

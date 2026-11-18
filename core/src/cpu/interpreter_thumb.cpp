@@ -196,6 +196,10 @@ Interpreter::StepResult Interpreter::exec_thumb32(u16 hw1, u16 hw2, u32 pc) {
     const u32 op1 = bits(hw1, 12, 11), op2 = bits(hw1, 10, 4);
     const u32 instr32 = (static_cast<u32>(hw1) << 16) | hw2;
 
+    // NEON : même encodage qu'en ARM, à la position du bit U près.
+    if ((hw1 & 0xEF00) == 0xEF00) return neon_data(0xF2000000 | (bit(hw1, 12) << 24) | (instr32 & 0x00FFFFFF));
+    if ((hw1 & 0xFF10) == 0xF900) return neon_load_store(0xF4000000 | (instr32 & 0x00FFFFFF));
+
     if (op1 == 1) {
         if ((op2 & 0x64) == 0x00) {  // LDM / STM (PUSH.W, POP.W)
             const u32 mode = bits(hw1, 8, 7), rn = hw1 & 0xF;
@@ -470,7 +474,12 @@ Interpreter::StepResult Interpreter::thumb32_multiply(u16 hw1, u16 hw2) {
             halfword_multiply(1, false, bit(hw2, 4), rd_hi, ra_lo, rn_idx, rm_idx, ra_lo != 15);
             return StepResult::Ok;
         }
-        if (op1 != 0) return StepResult::Undefined;  // SMMUL, SMUAD...
+        if ((op1 == 5 || op1 == 6) && bits(hw2, 7, 5) == 0) {  // SMMUL / SMMLA (5), SMMLS (6)
+            if (op1 == 6 && ra_lo == 15) return StepResult::Undefined;
+            most_significant_multiply(rd_hi, ra_lo, rn_idx, rm_idx, op1 == 6, bit(hw2, 4));
+            return StepResult::Ok;
+        }
+        if (op1 != 0) return StepResult::Undefined;  // SMUAD, SMLSD...
         switch (bits(hw2, 7, 4)) {
             case 0: r[rd_hi] = rn * rm + (ra_lo == 15 ? 0 : r[ra_lo]); return StepResult::Ok;  // MUL, MLA
             case 1: r[rd_hi] = r[ra_lo] - rn * rm; return StepResult::Ok;                        // MLS

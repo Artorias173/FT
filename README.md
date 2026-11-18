@@ -1,8 +1,8 @@
 # FT Vita : fondations d'un émulateur PS Vita pour Android
 
 Ce dépôt ne contient encore que les **fondations** : il exécute du code C
-compilé pour le processeur de la Vita (ARM et Thumb-2, entiers et flottants),
-mais pas encore de jeux. L'architecture permet ensuite de
+compilé pour le processeur de la Vita (ARM et Thumb-2, entiers, flottants et
+NEON), mais pas encore de jeux. L'architecture permet ensuite de
 remplacer chaque brique (CPU, GPU, HLE) sans toucher aux autres.
 
 ## Architecture
@@ -16,7 +16,7 @@ core/                     Cœur d'émulation C++17 portable (Android, Linux)
     emulator.h            Orchestrateur : cycle de vie, thread d'émulation
     memory/memory.h       Espace d'adressage invité 4 Gio (mmap + mprotect)
     cpu/cpu.h             Interface CpuBackend (interpréteur aujourd'hui, dynarec demain)
-    cpu/interpreter.h     Interpréteur ARMv7 de référence : ARM, Thumb-2 et flottants VFPv3
+    cpu/interpreter.h     Interpréteur ARMv7 de référence : ARM, Thumb-2, VFPv3 et NEON
     loader/elf_loader.h   Chargeur ELF ARM 32 bits non chiffré
     hle/kernel.h          Émulation haut niveau des modules système (NID -> C++)
     gpu/renderer.h        Interface de rendu (NullRenderer, Vulkan à venir)
@@ -28,6 +28,7 @@ core/                     Cœur d'émulation C++17 portable (Android, Linux)
 
 | Composant de la Vita              | Approche retenue                                              |
 |-----------------------------------|---------------------------------------------------------------|
+| Calcul flottant de la Vita        | Règles ARM émulées au-dessus de l'IEEE de l'hôte (`core/src/cpu/fp.h`) : FPSCR de départ de la Vita (dénormaux à zéro, NaN par défaut), propagation des NaN, modes d'arrondi, drapeaux d'exception. NEON suit toujours les réglages standard ARM. |
 | CPU ARM Cortex-A9 (ARMv7, Thumb-2, NEON) | `CpuBackend` abstrait. Interpréteur pour la mise au point, puis [dynarmic](https://github.com/lioncash/dynarmic) (recompilation ARMv7 vers ARM64) pour les performances. |
 | 512 Mo de RAM, adresses 32 bits   | Réservation de 4 Gio côté hôte : adresse invitée = `base + offset`. |
 | Firmware et modules système       | HLE : les imports (NID) sont remplacés par `svc #n` et implémentés en C++. Aucun fichier du firmware n'est nécessaire. |
@@ -44,10 +45,13 @@ cmake -S core -B core/build && cmake --build core/build -j && ctest --test-dir c
 
 Si `clang` et `ld.lld` sont installés, les tests compilent aussi
 `core/tests/guest/programs.c` pour un Cortex-A9, en ARM et en Thumb-2, avec
-`-O0`, `-O2` et `-Os`, avec ou sans unité flottante. Chaque programme exécuté
+`-O0` à `-O3`, sans flottants, avec VFP ou avec NEON. Chaque programme exécuté
 dans l'émulateur doit donner exactement le même résultat que le même code
 compilé nativement, au bit près pour les flottants : tri, CRC32, tables de
 sauts, calcul 64 bits, matrices 4×4, vecteurs 3D, Mandelbrot, physique, etc.
+Les tests NEON (`programs_neon.c`) utilisent les intrinsics de `arm_neon.h`
+côté Vita et une référence scalaire côté natif. `tests/fp_tests.cpp` vérifie
+les règles flottantes ARM sur des valeurs calculées à la main.
 
 **Application Android :** il faut le SDK Android et le NDK. Ouvrez le projet
 dans Android Studio, ou lancez :
@@ -61,7 +65,7 @@ réservation de 4 Gio d'espace d'adressage l'exige.
 
 ## Feuille de route
 
-1. **CPU** : ~~Thumb-2~~ et ~~VFPv3~~ (faits). Restent NEON (calcul vectoriel), les modes flottants de la console (mise à zéro des dénormaux) et le moniteur exclusif multicœur. Brancher ensuite dynarmic pour les performances.
+1. **CPU** : ~~Thumb-2~~, ~~VFPv3~~, ~~NEON~~, ~~réglages flottants de la Vita~~ (faits). Restent le moniteur exclusif multicœur et les performances (brancher dynarmic).
 2. **Chargeur** : ELF relogeables `ET_SCE_RELEXEC`, résolution des imports et exports (`sceModuleInfo`), format VPK (homebrew).
 3. **HLE** : threads (SceThreadmgr), fichiers (SceIofilemgr), affichage (SceDisplay), manettes (SceCtrl), audio (SceAudio).
 4. **GPU** : `VulkanRenderer`, puis SceGxm et le traducteur de shaders.

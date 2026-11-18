@@ -12,6 +12,7 @@ add_library(vita_core STATIC
     src/cpu/interpreter_arm.cpp
     src/cpu/interpreter_thumb.cpp
     src/cpu/interpreter_vfp.cpp
+    src/cpu/interpreter_neon.cpp
     src/cpu/fp.cpp
     src/loader/elf_loader.cpp
     src/hle/kernel.cpp
@@ -39,8 +40,9 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
 
     # Programmes invités : les mêmes sources C compilées pour un Cortex-A9.
     # Format : mode;optimisation;flottants (soft = sans VFP, vfp = VFPv3 matériel).
-    target_sources(vita_core_tests PRIVATE tests/guest/programs_float.c)
-    set_source_files_properties(tests/guest/programs_float.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+    target_sources(vita_core_tests PRIVATE tests/guest/programs_float.c tests/guest/programs_neon.c)
+    set_source_files_properties(tests/guest/programs_float.c tests/guest/programs_neon.c
+                                PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 
     find_program(VITA_GUEST_CLANG clang)
     find_program(VITA_GUEST_LLD ld.lld)
@@ -49,7 +51,8 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
         set(guest_dir ${CMAKE_CURRENT_BINARY_DIR}/guest)
         set(guest_outputs)
         foreach(spec thumb:O0:soft thumb:O2:soft thumb:Os:soft arm:O0:soft arm:O2:soft arm:Os:soft
-                     thumb:O0:vfp thumb:O2:vfp arm:O2:vfp)
+                     thumb:O0:vfp thumb:O2:vfp arm:O2:vfp
+                     thumb:O0:neon thumb:O2:neon thumb:O3:neon arm:O2:neon arm:O3:neon)
             string(REPLACE ":" ";" parts ${spec})
             list(GET parts 0 mode)
             list(GET parts 1 opt)
@@ -65,6 +68,13 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
                 list(APPEND objects ${guest_dir}/${name}_float.o)
                 set(extra_commands COMMAND ${VITA_GUEST_CLANG} ${flags} -c ${guest_src}/programs_float.c
                                            -o ${guest_dir}/${name}_float.o)
+            elseif(fp STREQUAL "neon")
+                set(name ${name}_neon)
+                list(APPEND flags -mfloat-abi=hard -mfpu=neon-fp16 -DVITA_GUEST_FLOAT -DVITA_GUEST_NEON)
+                list(APPEND objects ${guest_dir}/${name}_float.o ${guest_dir}/${name}_neon.o)
+                set(extra_commands
+                    COMMAND ${VITA_GUEST_CLANG} ${flags} -c ${guest_src}/programs_float.c -o ${guest_dir}/${name}_float.o
+                    COMMAND ${VITA_GUEST_CLANG} ${flags} -c ${guest_src}/programs_neon.c -o ${guest_dir}/${name}_neon.o)
             else()
                 list(APPEND flags -mfloat-abi=soft)
             endif()
@@ -76,7 +86,8 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
                 ${extra_commands}
                 COMMAND ${VITA_GUEST_LLD} -static -nostdlib -e _start -Ttext=0x81000000 -z max-page-size=4096
                         ${objects} -o ${guest_dir}/${name}.elf
-                DEPENDS ${guest_src}/programs.c ${guest_src}/programs_float.c ${guest_src}/programs.h
+                DEPENDS ${guest_src}/programs.c ${guest_src}/programs_float.c ${guest_src}/programs_neon.c
+                        ${guest_src}/programs.h
                         ${guest_src}/guest_start.c
                 VERBATIM)
             list(APPEND guest_outputs ${guest_dir}/${name}.elf)

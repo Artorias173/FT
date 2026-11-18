@@ -26,6 +26,13 @@ void _start(void) {
         checksum = checksum * 31 + value;
     }
 #endif
+#ifdef VITA_GUEST_NEON
+    for (int i = 0; i < VITA_NEON_TEST_COUNT; ++i) {
+        unsigned value = run_neon_test(i);
+        report((unsigned)(VITA_TEST_COUNT + VITA_FLOAT_TEST_COUNT + i), value);
+        checksum = checksum * 31 + value;
+    }
+#endif
     exit_process((int)checksum);
 }
 

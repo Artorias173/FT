@@ -23,6 +23,8 @@ Interpreter::StepResult Interpreter::exec_arm(u32 instr, u32 pc) {
             bx_to((pc + 8 + offset) | 1);
             return StepResult::Ok;
         }
+        if (bits(instr, 27, 25) == 1) return neon_data(instr);                       // NEON : calcul
+        if (bits(instr, 27, 24) == 4 && !bit(instr, 20)) return neon_load_store(instr);  // NEON : VLDn/VSTn
         if (bits(instr, 27, 26) == 1) return StepResult::Ok;  // PLD, PLI, DMB, DSB, ISB, CLREX
         return StepResult::Undefined;
     }
@@ -288,6 +290,13 @@ Interpreter::StepResult Interpreter::arm_media(u32 instr) {
         if (sub == 7 && op2 == 1) { state_.r[rd] = bit_reverse(state_.r[rm]); return StepResult::Ok; } // RBIT
         if (sub == 7 && op2 == 5) { state_.r[rd] = revsh(state_.r[rm]); return StepResult::Ok; }      // REVSH
         return StepResult::Undefined;
+    }
+
+    if (op1 == 0x15 && (op2 == 0 || op2 == 1 || op2 == 6 || op2 == 7)) {  // SMMUL/SMMLA, SMMLS
+        // Rd = bits 19:16, Ra = bits 15:12 (15 pour SMMUL), Rm = bits 11:8, Rn = bits 3:0.
+        if (op2 >= 6 && rd == 15) return StepResult::Undefined;
+        most_significant_multiply(rn, rd, rm, bits(instr, 11, 8), op2 >= 6, bit(instr, 5));
+        return StepResult::Ok;
     }
 
     const u32 lsb = bits(instr, 11, 7), field = bits(instr, 20, 16);

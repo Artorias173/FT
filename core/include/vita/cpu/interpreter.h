@@ -13,9 +13,9 @@ namespace vita {
 // stockages (simples, doubles, multiples, exclusifs), branchements avec
 // changement de mode, blocs IT, TBB/TBH, extraction de champs de bits,
 // extensions, inversion d'octets, et lecture du registre TLS (TPIDRURO).
-// Le calcul flottant VFPv3 (simple et double précision) est pris en charge.
-// Pas encore pris en charge : NEON (calcul vectoriel), les conversions en
-// virgule fixe ou en demi-précision, et les opérations SIMD sur 32 bits (UADD8...).
+// Le calcul flottant VFPv3 (simple et double précision, virgule fixe,
+// demi-précision) et le jeu d'instructions vectoriel NEON sont pris en charge.
+// Pas encore pris en charge : les opérations SIMD sur 32 bits (UADD8...).
 class Interpreter final : public CpuBackend {
 public:
     explicit Interpreter(Memory& memory) : memory_(memory) {}
@@ -72,9 +72,16 @@ private:
     StepResult vfp_load_store(u32 instr);
     StepResult vfp_transfer(u32 instr);
     StepResult vfp_data_processing(u32 instr);
+
+    // NEON (interpreter_neon.cpp). Les instructions sont toujours passées sous
+    // leur encodage ARM ; le décodeur Thumb-2 les convertit.
+    StepResult neon_data(u32 instr);        // 1111 001U ...
+    StepResult neon_load_store(u32 instr);  // 1111 0100 xxx0 ...
     void svc(u32 imm, u32 return_addr);
     // Multiplications signées sur demi-mots, communes à ARM et Thumb-2.
     // kind : 0 SMLAxy, 1 SMLAWy/SMULWy, 2 SMLALxy, 3 SMULxy.
+    // SMMUL, SMMLA, SMMLS : 32 bits de poids fort de Ra +/- Rn * Rm (arrondi si `round`).
+    void most_significant_multiply(u32 rd, u32 ra, u32 rn, u32 rm, bool subtract, bool round);
     void halfword_multiply(u32 kind, bool n_top, bool m_top, u32 rd_hi, u32 ra_lo, u32 rn, u32 rm, bool accumulate);
 
     Memory& memory_;

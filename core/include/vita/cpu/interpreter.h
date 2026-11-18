@@ -13,8 +13,9 @@ namespace vita {
 // stockages (simples, doubles, multiples, exclusifs), branchements avec
 // changement de mode, blocs IT, TBB/TBH, extraction de champs de bits,
 // extensions, inversion d'octets, et lecture du registre TLS (TPIDRURO).
-// Pas encore pris en charge : VFP/NEON (calcul flottant et vectoriel)
-// et les opérations SIMD sur 32 bits (UADD8, etc.).
+// Le calcul flottant VFPv3 (simple et double précision) est pris en charge.
+// Pas encore pris en charge : NEON (calcul vectoriel), les conversions en
+// virgule fixe ou en demi-précision, et les opérations SIMD sur 32 bits (UADD8...).
 class Interpreter final : public CpuBackend {
 public:
     explicit Interpreter(Memory& memory) : memory_(memory) {}
@@ -65,6 +66,12 @@ private:
     bool carry() const { return state_.cpsr & CpuState::kFlagC; }
     StepResult load_store_multiple(u32 rn, u32 list, bool load, bool increment, bool before, bool writeback);
     StepResult coprocessor(u32 instr);  // instruction coprocesseur (32 bits, ARM ou Thumb)
+
+    // Calcul flottant VFPv3 (interpreter_vfp.cpp). Encodage identique en ARM et en Thumb-2.
+    StepResult vfp(u32 instr);
+    StepResult vfp_load_store(u32 instr);
+    StepResult vfp_transfer(u32 instr);
+    StepResult vfp_data_processing(u32 instr);
     void svc(u32 imm, u32 return_addr);
     // Multiplications signées sur demi-mots, communes à ARM et Thumb-2.
     // kind : 0 SMLAxy, 1 SMLAWy/SMULWy, 2 SMLALxy, 3 SMULxy.

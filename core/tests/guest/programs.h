@@ -12,6 +12,11 @@ extern "C" {
 unsigned run_test(int index);
 const char* test_name(int index);
 
+/* Programmes en virgule flottante (variantes compilées avec l'unité VFP). */
+#define VITA_FLOAT_TEST_COUNT 10
+unsigned run_float_test(int index);
+const char* float_test_name(int index);
+
 #ifdef __cplusplus
 }
 #endif

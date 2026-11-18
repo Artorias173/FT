@@ -73,14 +73,14 @@ Interpreter::StepResult Interpreter::exec_arm(u32 instr, u32 pc) {
         }
 
         case 6:
-            return StepResult::Undefined;  // chargements coprocesseur (VLDR, VSTM...)
+            return coprocessor(instr & 0x0FFFFFFF);  // VLDR, VSTM, VMOV (2 registres)...
 
         default:
             if (bit(instr, 24)) {
                 svc(bits(instr, 23, 0), pc + 4);
                 return StepResult::Ok;
             }
-            return coprocessor(instr);
+            return coprocessor(instr & 0x0FFFFFFF);
     }
 }
 

@@ -213,8 +213,12 @@ Interpreter::StepResult Interpreter::load_store_multiple(u32 rn, u32 list, bool 
 }
 
 Interpreter::StepResult Interpreter::coprocessor(u32 instr) {
-    // Seul MRC p15, 0, Rt, c13, c0, 3 (lecture de TPIDRURO, le pointeur TLS) est géré.
-    // Le reste de l'espace coprocesseur (VFP/NEON en tête) viendra plus tard.
+    // Coprocesseurs 10 et 11 : unité flottante VFP. En Thumb, la variante T=1
+    // (bit 28) de cet espace correspond à NEON, pas encore pris en charge.
+    if (bits(instr, 11, 9) == 5) return bit(instr, 28) ? StepResult::Undefined : vfp(instr);
+
+    // Coprocesseur 15 : seul MRC p15, 0, Rt, c13, c0, 3 (lecture de TPIDRURO,
+    // le pointeur TLS) est géré.
     const bool is_mrc = bits(instr, 27, 24) == 0xE && bit(instr, 20) && bit(instr, 4);
     if (is_mrc && bits(instr, 11, 8) == 15 && bits(instr, 23, 21) == 0 && bits(instr, 19, 16) == 13 &&
         bits(instr, 3, 0) == 0 && bits(instr, 7, 5) == 3) {

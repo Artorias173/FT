@@ -178,13 +178,18 @@ void test_guest_programs() {
 #ifndef VITA_GUEST_DIR
     std::printf("Programmes invités ignorés (clang ou ld.lld introuvable)\n");
 #else
-    u32 expected[VITA_TEST_COUNT];
+    constexpr int kTotal = VITA_TEST_COUNT + VITA_FLOAT_TEST_COUNT;
+    u32 expected[kTotal];
     for (int i = 0; i < VITA_TEST_COUNT; ++i) expected[i] = run_test(i);
+    for (int i = 0; i < VITA_FLOAT_TEST_COUNT; ++i) expected[VITA_TEST_COUNT + i] = run_float_test(i);
+    auto name_of = [](int i) { return i < VITA_TEST_COUNT ? test_name(i) : float_test_name(i - VITA_TEST_COUNT); };
 
     constexpr u32 kExitNid = 0x7595D9AA;    // sceKernelExitProcess
     constexpr u32 kReportNid = 0xFFFF0001;  // fonction propre aux tests
 
-    for (const char* variant : {"thumb_O0", "thumb_O2", "thumb_Os", "arm_O0", "arm_O2", "arm_Os"}) {
+    for (const char* variant : {"thumb_O0", "thumb_O2", "thumb_Os", "arm_O0", "arm_O2", "arm_Os",
+                                "thumb_O0_vfp", "thumb_O2_vfp", "arm_O2_vfp"}) {
+        const int count = std::strstr(variant, "_vfp") ? kTotal : VITA_TEST_COUNT;
         Emulator emu;
         CHECK(emu.init());
         const std::string path = std::string(VITA_GUEST_DIR) + "/" + variant + ".elf";
@@ -194,7 +199,7 @@ void test_guest_programs() {
             continue;
         }
 
-        std::vector<u32> got(VITA_TEST_COUNT, 0xDEADDEAD);
+        std::vector<u32> got(count, 0xDEADDEAD);
         emu.kernel().register_function(kReportNid, "test_report", [&](CpuState& s) {
             if (s.r[0] < got.size()) got[s.r[0]] = s.r[1];
         });
@@ -210,16 +215,16 @@ void test_guest_programs() {
             ++g_failures;
         }
         int ok = 0;
-        for (int i = 0; i < VITA_TEST_COUNT; ++i) {
+        for (int i = 0; i < count; ++i) {
             if (got[i] == expected[i]) {
                 ++ok;
             } else {
-                std::fprintf(stderr, "ÉCHEC [%s] %s : obtenu 0x%08x, attendu 0x%08x\n", variant, test_name(i),
+                std::fprintf(stderr, "ÉCHEC [%s] %s : obtenu 0x%08x, attendu 0x%08x\n", variant, name_of(i),
                              got[i], expected[i]);
                 ++g_failures;
             }
         }
-        std::printf("  %-9s %2d/%d programmes corrects (%.1f ms)\n", variant, ok, VITA_TEST_COUNT, ms);
+        std::printf("  %-13s %2d/%d programmes corrects (%.1f ms)\n", variant, ok, count, ms);
     }
 #endif
 }

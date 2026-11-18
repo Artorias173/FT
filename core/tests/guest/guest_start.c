@@ -19,6 +19,13 @@ void _start(void) {
         report((unsigned)i, value);
         checksum = checksum * 31 + value;
     }
+#ifdef VITA_GUEST_FLOAT
+    for (int i = 0; i < VITA_FLOAT_TEST_COUNT; ++i) {
+        unsigned value = run_float_test(i);
+        report((unsigned)(VITA_TEST_COUNT + i), value);
+        checksum = checksum * 31 + value;
+    }
+#endif
     exit_process((int)checksum);
 }
 

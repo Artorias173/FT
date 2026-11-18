@@ -22,6 +22,9 @@ class Emulator {
 public:
     // Disposition mémoire simplifiée (les adresses réelles viendront plus tard).
     static constexpr GuestAddr kStackTop = 0x80000000;
+    static constexpr GuestAddr kTrapAddr = 0x7FF00000;  // adresse de retour de module_start
+    static constexpr GuestAddr kTlsAddr = 0x7FF10000;   // zone TLS du thread principal
+    static constexpr u32 kTlsSize = 0x10000;
     static constexpr u32 kStackSize = 1 * 1024 * 1024;
     static constexpr u64 kInstructionsPerSlice = 100000;
     // FPSCR de départ d'un thread Vita : arrondi au plus proche, mise à zéro
@@ -33,7 +36,8 @@ public:
 
     bool init(std::unique_ptr<Renderer> renderer = nullptr);
     LoadResult load(const std::string& path);
-    LoadResult load(const std::vector<u8>& elf_data);
+    LoadResult load(const std::vector<u8>& data);
+    const LoadedModule& module() const { return module_; }
 
     void start();   // lance le thread d'émulation
     void pause();
@@ -60,6 +64,7 @@ private:
     std::unique_ptr<CpuBackend> cpu_;
     Kernel kernel_;
     std::unique_ptr<Renderer> renderer_;
+    LoadedModule module_;
 
     std::thread thread_;
     std::atomic<EmuState> state_{EmuState::Idle};

@@ -30,7 +30,13 @@ public:
     u32 bind_svc(u32 nid);
 
     // Remplace l'appel importé (stub) situé à `stub_addr` par une redirection vers le NID.
-    bool patch_import(GuestAddr stub_addr, u32 nid);
+    bool patch_import(GuestAddr stub_addr, u32 nid, const std::string& library = {});
+
+    // SVC réservé : retour de module_start (le processus se termine avec r0).
+    static constexpr u32 kSvcModuleReturn = 0xFFFFFF;
+
+    // Nombre d'appels à des fonctions non implémentées (pour le diagnostic).
+    u32 unimplemented_calls() const { return unimplemented_calls_; }
 
     // À brancher sur CpuBackend::set_svc_handler.
     void handle_svc(u32 imm, CpuState& state);
@@ -51,6 +57,8 @@ private:
     Memory& memory_;
     std::unordered_map<u32, Function> functions_;
     std::vector<u32> import_table_;  // index SVC -> NID
+    std::unordered_map<u32, std::string> libraries_;  // NID -> bibliothèque (diagnostic)
+    u32 unimplemented_calls_ = 0;
     std::function<void(s32)> on_exit_;
 };
 

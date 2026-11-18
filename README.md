@@ -1,8 +1,9 @@
 # FT Vita : fondations d'un émulateur PS Vita pour Android
 
-Ce dépôt ne contient encore que les **fondations** : il exécute du code C
-compilé pour le processeur de la Vita (ARM et Thumb-2, entiers, flottants et
-NEON), mais pas encore de jeux. L'architecture permet ensuite de
+Ce dépôt ne contient encore que les **fondations** : il charge les exécutables
+Vita non chiffrés (eboot.bin de homebrew au format FSELF, ELF Vita relogeables)
+et exécute leur code (ARM, Thumb-2, flottants, NEON), mais pas encore de jeux :
+il manque les modules système (threads, fichiers, affichage, manettes) et le GPU. L'architecture permet ensuite de
 remplacer chaque brique (CPU, GPU, HLE) sans toucher aux autres.
 
 ## Architecture
@@ -17,11 +18,14 @@ core/                     Cœur d'émulation C++17 portable (Android, Linux)
     memory/memory.h       Espace d'adressage invité 4 Gio (mmap + mprotect)
     cpu/cpu.h             Interface CpuBackend (interpréteur aujourd'hui, dynarec demain)
     cpu/interpreter.h     Interpréteur ARMv7 de référence : ARM, Thumb-2, VFPv3 et NEON
-    loader/elf_loader.h   Chargeur ELF ARM 32 bits non chiffré
+    loader/elf_loader.h   Chargeur : FSELF (compressé ou non), ELF Vita relogeable, imports par NID
+    loader/relocation.h   Relocations Vita (PT_SCE_RELA) et ARM
     hle/kernel.h          Émulation haut niveau des modules système (NID -> C++)
     gpu/renderer.h        Interface de rendu (NullRenderer, Vulkan à venir)
   tests/                  Tests unitaires et de bout en bout
     guest/                Programmes C exécutés nativement ET dans l'émulateur
+      homebrew/           Homebrew de test empaqueté au format Vita
+    tools/make_vita_elf.py  Équivalent minimal de vita-elf-create + vita-make-fself
 ```
 
 ### Choix techniques
@@ -49,6 +53,11 @@ Si `clang` et `ld.lld` sont installés, les tests compilent aussi
 dans l'émulateur doit donner exactement le même résultat que le même code
 compilé nativement, au bit près pour les flottants : tri, CRC32, tables de
 sauts, calcul 64 bits, matrices 4×4, vecteurs 3D, Mandelbrot, physique, etc.
+Un homebrew de test (`tests/guest/homebrew`) est empaqueté par
+`tests/tools/make_vita_elf.py` en ELF Vita relogeable puis en FSELF (compressé
+ou non), comme le ferait le VitaSDK, puis chargé, y compris à une autre adresse
+que celle prévue pour exercer les relocations.
+
 Les tests NEON (`programs_neon.c`) utilisent les intrinsics de `arm_neon.h`
 côté Vita et une référence scalaire côté natif. `tests/fp_tests.cpp` vérifie
 les règles flottantes ARM sur des valeurs calculées à la main.
@@ -66,7 +75,7 @@ réservation de 4 Gio d'espace d'adressage l'exige.
 ## Feuille de route
 
 1. **CPU** : ~~Thumb-2~~, ~~VFPv3~~, ~~NEON~~, ~~réglages flottants de la Vita~~ (faits). Restent le moniteur exclusif multicœur et les performances (brancher dynarmic).
-2. **Chargeur** : ELF relogeables `ET_SCE_RELEXEC`, résolution des imports et exports (`sceModuleInfo`), format VPK (homebrew).
+2. **Chargeur** : ~~FSELF, `ET_SCE_RELEXEC`, relocations, imports~~ (faits). Restent les imports de variables, les exports, les formats de relocation compacts (2 à 9) des SDK récents, l'ouverture des paquets VPK, et une validation sur de vrais binaires du VitaSDK.
 3. **HLE** : threads (SceThreadmgr), fichiers (SceIofilemgr), affichage (SceDisplay), manettes (SceCtrl), audio (SceAudio).
 4. **GPU** : `VulkanRenderer`, puis SceGxm et le traducteur de shaders.
 5. **Interface** : bibliothèque de jeux, contrôles tactiles à l'écran, réglages.

@@ -65,6 +65,22 @@ bool Memory::is_mapped(GuestAddr addr, u32 size) const {
     return true;
 }
 
+bool Memory::is_free(GuestAddr addr, u32 size) const {
+    if (!base_ || size == 0) return false;
+    const u64 last = static_cast<u64>(addr) + size - 1;
+    if (last >= kAddressSpaceSize) return false;
+    for (u64 i = page_index(addr); i <= page_index(last); ++i)
+        if (pages_[i]) return false;
+    return true;
+}
+
+GuestAddr Memory::find_free(u32 size, GuestAddr start, u32 align) const {
+    if (align < kPageSize) align = kPageSize;
+    for (u64 a = (static_cast<u64>(start) + align - 1) / align * align; a + size <= kAddressSpaceSize; a += align)
+        if (is_free(static_cast<GuestAddr>(a), size)) return static_cast<GuestAddr>(a);
+    return 0;
+}
+
 u8* Memory::host_ptr(GuestAddr addr, u32 size) {
     return is_mapped(addr, size) ? base_ + addr : nullptr;
 }

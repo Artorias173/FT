@@ -1,0 +1,8 @@
+{
+    "module_name": "vita_test_homebrew",
+    "libraries": [
+        {"name": "SceLibKernel", "nid": "0xCAE9ACE6", "functions": {"sceKernelExitProcess": "0x7595D9AA"}},
+        {"name": "VitaTest", "nid": "0xFFFF0000",
+         "functions": {"vitaTestReport": "0xFFFF0001", "vitaTestUnimplemented": "0xFFFF0002"}}
+    ]
+}

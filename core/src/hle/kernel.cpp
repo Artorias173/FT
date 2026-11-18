@@ -20,8 +20,9 @@ u32 Kernel::bind_svc(u32 nid) {
     return static_cast<u32>(import_table_.size() - 1);
 }
 
-bool Kernel::patch_import(GuestAddr stub_addr, u32 nid) {
+bool Kernel::patch_import(GuestAddr stub_addr, u32 nid, const std::string& library) {
     if (!memory_.is_mapped(stub_addr, 8)) return false;
+    if (!library.empty()) libraries_[nid] = library;
     const u32 index = bind_svc(nid);
     memory_.write<u32>(stub_addr, encode_svc(index));
     memory_.write<u32>(stub_addr + 4, kArmBxLr);
@@ -29,6 +30,11 @@ bool Kernel::patch_import(GuestAddr stub_addr, u32 nid) {
 }
 
 void Kernel::handle_svc(u32 imm, CpuState& state) {
+    if (imm == kSvcModuleReturn) {
+        LOG_INFO("module_start a rendu la main (%d)", static_cast<s32>(state.r[0]));
+        request_exit(static_cast<s32>(state.r[0]));
+        return;
+    }
     if (imm >= import_table_.size()) {
         LOG_WARN("SVC #%u inconnu (retour à 0x%08x)", imm, state.r[15]);
         state.r[0] = 0x80020001;  // code d'erreur générique
@@ -37,7 +43,9 @@ void Kernel::handle_svc(u32 imm, CpuState& state) {
     const u32 nid = import_table_[imm];
     auto it = functions_.find(nid);
     if (it == functions_.end()) {
-        LOG_WARN("Fonction non implémentée NID 0x%08x", nid);
+        auto lib = libraries_.find(nid);
+        LOG_WARN("Fonction non implémentée NID 0x%08x (%s)", nid, lib != libraries_.end() ? lib->second.c_str() : "?");
+        ++unimplemented_calls_;
         state.r[0] = 0;  // valeur neutre pour permettre au programme de continuer
         return;
     }

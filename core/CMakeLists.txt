@@ -15,6 +15,7 @@ add_library(vita_core STATIC
     src/cpu/interpreter_neon.cpp
     src/cpu/fp.cpp
     src/loader/elf_loader.cpp
+    src/loader/relocation.cpp
     src/hle/kernel.cpp
     src/gpu/renderer.cpp
 )
@@ -26,7 +27,10 @@ target_compile_options(vita_core PRIVATE -Wall -Wextra)
 find_package(Threads REQUIRED)
 target_link_libraries(vita_core PUBLIC Threads::Threads)
 if(ANDROID)
-    target_link_libraries(vita_core PUBLIC log)
+    target_link_libraries(vita_core PUBLIC log z)  # zlib est fourni par le NDK
+else()
+    find_package(ZLIB REQUIRED)  # segments compressés des FSELF
+    target_link_libraries(vita_core PUBLIC ZLIB::ZLIB)
 endif()
 
 option(VITA_BUILD_TESTS "Compiler les tests du cœur" ${PROJECT_IS_TOP_LEVEL})
@@ -34,7 +38,8 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
     enable_testing()
     enable_language(C)
     # programs.c est aussi compilé nativement : il fournit les résultats attendus.
-    add_executable(vita_core_tests tests/core_tests.cpp tests/fp_tests.cpp tests/guest/programs.c)
+    add_executable(vita_core_tests tests/core_tests.cpp tests/fp_tests.cpp tests/loader_tests.cpp tests/guest/programs.c
+                   tests/guest/homebrew/homebrew.c)
     target_link_libraries(vita_core_tests PRIVATE vita_core)
     add_test(NAME vita_core_tests COMMAND vita_core_tests)
 
@@ -92,6 +97,46 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
                 VERBATIM)
             list(APPEND guest_outputs ${guest_dir}/${name}.elf)
         endforeach()
+        # Homebrew de test au format Vita (ELF relogeable et FSELF), si Python est disponible.
+        find_package(Python3 COMPONENTS Interpreter)
+        if(Python3_FOUND)
+            set(hb_src ${guest_src}/homebrew)
+            set(hb_flags --target=armv7a-none-eabi -mcpu=cortex-a9 -mthumb -O2 -mfloat-abi=hard -mfpu=neon
+                         -mno-movt -fno-pic -ffreestanding -fno-builtin -nostdlib)
+            set(hb_tool ${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/make_vita_elf.py)
+            foreach(variant exit return)
+                set(hb_defs)
+                if(variant STREQUAL "return")
+                    set(hb_defs -DHB_RETURN_FROM_START)
+                endif()
+                set(hb ${guest_dir}/hb_${variant})
+                set(hb_outputs ${hb}.velf ${hb}.self ${hb}_z.self)
+                if(variant STREQUAL "exit")
+                    list(APPEND hb_outputs ${hb}_encrypted.self)
+                    set(hb_extra COMMAND ${Python3_EXECUTABLE} ${hb_tool} ${hb}.elf ${hb_src}/nids.json ${hb}_tmp.velf
+                                         --fself ${hb}_encrypted.self --encrypted)
+                else()
+                    set(hb_extra)
+                endif()
+                add_custom_command(
+                    OUTPUT ${hb_outputs}
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${guest_dir}
+                    COMMAND ${VITA_GUEST_CLANG} ${hb_flags} ${hb_defs} -c ${hb_src}/main.c -o ${hb}_main.o
+                    COMMAND ${VITA_GUEST_CLANG} ${hb_flags} -c ${hb_src}/homebrew.c -o ${hb}_homebrew.o
+                    COMMAND ${VITA_GUEST_CLANG} ${hb_flags} -c ${hb_src}/stubs.S -o ${hb}_stubs.o
+                    COMMAND ${VITA_GUEST_LLD} -q -T ${hb_src}/homebrew.ld --no-rosegment
+                            ${hb}_main.o ${hb}_homebrew.o ${hb}_stubs.o -o ${hb}.elf
+                    COMMAND ${Python3_EXECUTABLE} ${hb_tool} ${hb}.elf ${hb_src}/nids.json ${hb}.velf --fself ${hb}.self
+                    COMMAND ${Python3_EXECUTABLE} ${hb_tool} ${hb}.elf ${hb_src}/nids.json ${hb}.velf --fself ${hb}_z.self
+                            --compress
+                    ${hb_extra}
+                    DEPENDS ${hb_src}/main.c ${hb_src}/homebrew.c ${hb_src}/homebrew.h ${hb_src}/stubs.S
+                            ${hb_src}/homebrew.ld ${hb_src}/nids.json ${hb_tool}
+                    VERBATIM)
+                list(APPEND guest_outputs ${hb_outputs})
+            endforeach()
+            target_compile_definitions(vita_core_tests PRIVATE VITA_HOMEBREW_TESTS=1)
+        endif()
         add_custom_target(vita_guest_programs DEPENDS ${guest_outputs})
         add_dependencies(vita_core_tests vita_guest_programs)
         target_compile_definitions(vita_core_tests PRIVATE VITA_GUEST_DIR="${guest_dir}")

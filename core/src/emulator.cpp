@@ -34,29 +34,58 @@ bool Emulator::init(std::unique_ptr<Renderer> renderer) {
     return true;
 }
 
-LoadResult Emulator::load(const std::string& path) { return finish_load(load_elf_file(memory_, path)); }
+LoadResult Emulator::load(const std::string& path) { return finish_load(load_executable_file(memory_, path)); }
 
-LoadResult Emulator::load(const std::vector<u8>& elf_data) { return finish_load(load_elf(memory_, elf_data)); }
+LoadResult Emulator::load(const std::vector<u8>& data) { return finish_load(load_executable(memory_, data)); }
 
 LoadResult Emulator::finish_load(LoadResult result) {
     if (!result.ok()) {
         set_status(EmuState::Error, result.message);
         return result;
     }
-    if (!memory_.map(kStackTop - kStackSize, kStackSize)) {
+    auto fail = [&](const char* message) {
         result.status = LoadStatus::MapFailed;
-        result.message = "Impossible d'allouer la pile";
+        result.message = message;
         set_status(EmuState::Error, result.message);
         return result;
+    };
+    const LoadedModule& mod = result.module;
+
+    // Appels système : chaque stub importé est redirigé vers le HLE.
+    u32 patched = 0;
+    for (const FunctionImport& imp : mod.imports) {
+        if (kernel_.patch_import(imp.stub, imp.nid, imp.library)) ++patched;
+        else LOG_WARN("Stub d'import illisible à 0x%08x (NID 0x%08x)", imp.stub, imp.nid);
+    }
+    if (mod.variable_imports) LOG_WARN("%u import(s) de variables non résolu(s)", mod.variable_imports);
+
+    // Pile, piège de retour et TLS du thread principal.
+    if (!memory_.map(kStackTop - kStackSize, kStackSize)) return fail("Impossible d'allouer la pile");
+    if (!memory_.map(kTrapAddr, Memory::kPageSize)) return fail("Impossible d'allouer le piège de retour");
+    memory_.write<u32>(kTrapAddr, 0xEF000000 | Kernel::kSvcModuleReturn);  // svc #kSvcModuleReturn
+    memory_.write<u32>(kTrapAddr + 4, 0xEAFFFFFE);                        // b .
+    if (!memory_.map(kTlsAddr, kTlsSize)) return fail("Impossible d'allouer la TLS");
+    if (mod.tls_start && mod.tls_filesz && mod.tls_filesz <= kTlsSize) {
+        // Image initiale des variables TLS. La disposition exacte attendue par le
+        // système de la Vita reste à confirmer.
+        for (u32 i = 0; i < mod.tls_filesz; ++i) memory_.write<u8>(kTlsAddr + i, memory_.read<u8>(mod.tls_start + i));
     }
 
     CpuState& s = cpu_->state();
     s = CpuState{};
     s.sp() = kStackTop;
+    s.lr() = kTrapAddr;
     s.fpscr = kInitialFpscr;
-    s.pc() = result.module.entry & ~1u;
-    if (result.module.entry & 1) s.cpsr |= CpuState::kFlagT;  // point d'entrée Thumb
+    s.tpidruro = kTlsAddr;
+    s.pc() = mod.entry & ~1u;
+    if (mod.entry & 1) s.cpsr |= CpuState::kFlagT;  // point d'entrée Thumb
+    if (mod.entry_is_module_start) {
+        s.r[0] = 0;  // args : taille des arguments
+        s.r[1] = 0;  // argp : aucun argument
+    }
 
+    module_ = mod;
+    LOG_INFO("%u stub(s) redirigé(s)", patched);
     set_status(EmuState::Loaded, result.message);
     return result;
 }

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "guest/homebrew/homebrew.h"
 #include "guest/programs.h"
 
 #include "vita/cpu/interpreter.h"
@@ -14,6 +15,7 @@ using namespace vita;
 
 int g_failures = 0;
 void run_fp_tests();
+void run_loader_tests();
 
 #define CHECK(cond)                                                        \
     do {                                                                   \
@@ -84,12 +86,12 @@ void test_memory() {
 void test_loader_rejects() {
     Memory mem;
     CHECK(mem.init());
-    CHECK(load_elf(mem, {'S', 'C', 'E', 0, 1, 2, 3}).status == LoadStatus::EncryptedSelf);
-    CHECK(load_elf(mem, {1, 2, 3, 4}).status == LoadStatus::NotElf);
+    CHECK(load_executable(mem, {'S', 'C', 'E', 0, 1, 2, 3}).status == LoadStatus::NotElf);  // SELF tronqué
+    CHECK(load_executable(mem, {1, 2, 3, 4}).status == LoadStatus::NotElf);
 
     auto elf = make_elf({0xE1A00000});
     elf[18] = 3;  // EM_386 : mauvaise architecture
-    CHECK(load_elf(mem, elf).status == LoadStatus::WrongArch);
+    CHECK(load_executable(mem, elf).status == LoadStatus::WrongArch);
 }
 
 void test_flags() {
@@ -155,6 +157,7 @@ void test_end_to_end() {
     CHECK(s.r[3] == 2);
     CHECK(s.sp() == Emulator::kStackTop);
     CHECK(s.lr() == kBase + 0x28);
+    CHECK(s.tpidruro == Emulator::kTlsAddr);
     CHECK(emu.state() == EmuState::Stopped);
     CHECK(emu.status().find("code 8") != std::string::npos);
 }
@@ -239,6 +242,76 @@ void test_guest_programs() {
 #endif
 }
 
+// Homebrew au format Vita : ELF relogeable (ET_SCE_RELEXEC) et FSELF, avec
+// sceModuleInfo, imports par NID et relocations, chargé puis exécuté.
+void test_vita_homebrew() {
+#if !defined(VITA_GUEST_DIR) || !defined(VITA_HOMEBREW_TESTS)
+    std::printf("Homebrew Vita ignoré (clang, ld.lld ou Python introuvable)\n");
+#else
+    u32 expected[HB_VALUE_COUNT];
+    u32 checksum = 0;
+    for (int i = 0; i < HB_VALUE_COUNT; ++i) {
+        expected[i] = hb_value(i);
+        checksum = checksum * 31 + expected[i];
+    }
+    const std::string code = "code " + std::to_string(checksum & 0x7FFFFFFF) + ")";
+
+    struct Case {
+        const char* file;
+        bool fself;
+        bool occupy;  // occupe l'adresse prévue pour forcer le chargement ailleurs
+    };
+    const Case cases[] = {
+        {"hb_exit.velf", false, false}, {"hb_exit.self", true, false},   {"hb_exit_z.self", true, false},
+        {"hb_exit_z.self", true, true}, {"hb_return_z.self", true, false}, {"hb_return.velf", false, true},
+    };
+    for (const Case& c : cases) {
+        Emulator emu;
+        CHECK(emu.init());
+        if (c.occupy) CHECK(emu.memory().map(0x81000000, 0x20000));
+        std::vector<u32> got(103, 0xDEADDEAD);
+        emu.kernel().register_function(0xFFFF0001, "vitaTestReport", [&](CpuState& s) {
+            if (s.r[0] < got.size()) got[s.r[0]] = s.r[1];
+        });
+        const LoadResult r = emu.load(std::string(VITA_GUEST_DIR) + "/" + c.file);
+        if (!r.ok()) {
+            std::fprintf(stderr, "ÉCHEC [%s] chargement : %s\n", c.file, r.message.c_str());
+            ++g_failures;
+            continue;
+        }
+        const LoadedModule& m = emu.module();
+        CHECK(m.name == "vita_test_homebrew");
+        CHECK(m.entry_is_module_start);
+        CHECK(m.imports.size() == 3);
+        CHECK(m.from_self == c.fself);
+        CHECK(m.relocated == c.occupy);
+
+        const CpuExit exit = emu.run_slice(10'000'000);
+        int ok = 0;
+        for (int i = 0; i < HB_VALUE_COUNT; ++i) {
+            if (got[i] == expected[i]) ++ok;
+            else std::fprintf(stderr, "ÉCHEC [%s] valeur %d : 0x%08x au lieu de 0x%08x\n", c.file, i, got[i], expected[i]);
+        }
+        g_failures += HB_VALUE_COUNT - ok;
+        CHECK(exit == CpuExit::Halted);
+        CHECK(got[100] == 0 && got[101] == 0);  // module_start(0, NULL)
+        CHECK(got[102] == 0);                   // fonction non implémentée : renvoie 0
+        CHECK(emu.kernel().unimplemented_calls() == 1);
+        CHECK(emu.state() == EmuState::Stopped);
+        if (emu.status().find(code) == std::string::npos) {
+            std::fprintf(stderr, "ÉCHEC [%s] état final : %s\n", c.file, emu.status().c_str());
+            ++g_failures;
+        }
+        std::printf("  %-17s %d/%d valeurs correctes%s\n", c.file, ok, HB_VALUE_COUNT, c.occupy ? " (relogé)" : "");
+    }
+
+    // Un SELF chiffré doit être refusé proprement.
+    Emulator emu;
+    CHECK(emu.init());
+    CHECK(emu.load(std::string(VITA_GUEST_DIR) + "/hb_exit_encrypted.self").status == LoadStatus::EncryptedSelf);
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -248,7 +321,9 @@ int main() {
     test_end_to_end();
     test_threaded_run();
     run_fp_tests();
+    run_loader_tests();
     test_guest_programs();
+    test_vita_homebrew();
 
     if (g_failures) {
         std::fprintf(stderr, "%d vérification(s) en échec\n", g_failures);

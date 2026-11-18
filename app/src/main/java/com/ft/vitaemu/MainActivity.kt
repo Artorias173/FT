@@ -60,7 +60,7 @@ class MainActivity : Activity() {
 
     /** Le cœur C++ lit un chemin de fichier : on copie le document choisi en local. */
     private fun copyToCache(uri: Uri): File? = try {
-        val target = File(cacheDir, "program.elf")
+        val target = File(cacheDir, "eboot.bin")
         contentResolver.openInputStream(uri)?.use { input ->
             target.outputStream().use { output -> input.copyTo(output) }
         } ?: return null

@@ -31,6 +31,10 @@ public:
     bool map(GuestAddr addr, u32 size);
     void unmap(GuestAddr addr, u32 size);
     bool is_mapped(GuestAddr addr, u32 size = 1) const;
+    // Vrai si aucune page de la plage n'est mappée.
+    bool is_free(GuestAddr addr, u32 size) const;
+    // Première plage libre de `size` octets à partir de `start`, alignée sur `align` (0 si aucune).
+    GuestAddr find_free(u32 size, GuestAddr start, u32 align) const;
 
     // Pointeur hôte vers une adresse invitée, ou nullptr si elle n'est pas mappée.
     u8* host_ptr(GuestAddr addr, u32 size = 1);

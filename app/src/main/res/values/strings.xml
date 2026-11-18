@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FT Vita</string>
-    <string name="pick_file">Choisir un programme (ELF homebrew)</string>
-    <string name="intro">Sélectionnez un fichier ELF homebrew non chiffré. Les jeux commerciaux (eboot.bin chiffrés) ne sont pas encore pris en charge.</string>
+    <string name="pick_file">Choisir un programme (eboot.bin, .self, .velf)</string>
+    <string name="intro">Sélectionnez l'eboot.bin d'un homebrew (FSELF non chiffré) ou un ELF Vita. Les jeux commerciaux chiffrés ne sont pas pris en charge.</string>
     <string name="copy_failed">Impossible de lire le fichier sélectionné</string>
 </resources>

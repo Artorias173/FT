@@ -12,7 +12,8 @@
 
 using namespace vita;
 
-static int g_failures = 0;
+int g_failures = 0;
+void run_fp_tests();
 
 #define CHECK(cond)                                                        \
     do {                                                                   \
@@ -237,6 +238,7 @@ int main() {
     test_flags();
     test_end_to_end();
     test_threaded_run();
+    run_fp_tests();
     test_guest_programs();
 
     if (g_failures) {

@@ -53,6 +53,7 @@ LoadResult Emulator::finish_load(LoadResult result) {
     CpuState& s = cpu_->state();
     s = CpuState{};
     s.sp() = kStackTop;
+    s.fpscr = kInitialFpscr;
     s.pc() = result.module.entry & ~1u;
     if (result.module.entry & 1) s.cpsr |= CpuState::kFlagT;  // point d'entrée Thumb
 

@@ -24,6 +24,9 @@ public:
     static constexpr GuestAddr kStackTop = 0x80000000;
     static constexpr u32 kStackSize = 1 * 1024 * 1024;
     static constexpr u64 kInstructionsPerSlice = 100000;
+    // FPSCR de départ d'un thread Vita : arrondi au plus proche, mise à zéro
+    // des dénormaux (FZ) et NaN par défaut (DN). Valeur reprise de Vita3K.
+    static constexpr u32 kInitialFpscr = (1u << 25) | (1u << 24);
 
     Emulator();
     ~Emulator();

@@ -1,12 +1,10 @@
 // Interpréteur : unité de calcul flottant VFPv3 (simple et double précision).
 //
-// Les opérations utilisent l'arithmétique IEEE 754 de l'hôte, en arrondi au
-// plus proche, ce qui donne des résultats identiques au bit près. Les modes
-// non-IEEE de la console (mise à zéro des dénormaux, NaN par défaut) et les
-// exceptions flottantes ne sont pas encore émulés.
-#include <cmath>
+// Les calculs passent par fp.h, qui applique les règles ARM (FPSCR : mise à
+// zéro des dénormaux, NaN par défaut, mode d'arrondi, drapeaux d'exception).
 #include <cstring>
 
+#include "fp.h"
 #include "interpreter_util.h"
 #include "vita/cpu/interpreter.h"
 #include "vita/memory/memory.h"
@@ -29,13 +27,10 @@ void set_s(CpuState& s, u32 n, u32 v) {
     d = (n & 1) ? (d & 0xFFFFFFFFull) | (static_cast<u64>(v) << 32) : (d & ~0xFFFFFFFFull) | v;
 }
 
-template <typename T>
-struct Fp;
+template <typename T> struct Reg;
 
-template <>
-struct Fp<float> {
+template <> struct Reg<float> {
     using Bits = u32;
-    static constexpr Bits kSign = 0x80000000u;
     static Bits raw(const CpuState& s, u32 i) { return get_s(s, i); }
     static void set_raw(CpuState& s, u32 i, Bits v) { set_s(s, i, v); }
     static Bits expand_imm(u32 imm8) {
@@ -45,10 +40,8 @@ struct Fp<float> {
     }
 };
 
-template <>
-struct Fp<double> {
+template <> struct Reg<double> {
     using Bits = u64;
-    static constexpr Bits kSign = 0x8000000000000000ull;
     static Bits raw(const CpuState& s, u32 i) { return s.d[i]; }
     static void set_raw(CpuState& s, u32 i, Bits v) { s.d[i] = v; }
     static Bits expand_imm(u32 imm8) {
@@ -58,103 +51,85 @@ struct Fp<double> {
     }
 };
 
-template <typename T>
-T get(const CpuState& s, u32 i) {
-    const typename Fp<T>::Bits b = Fp<T>::raw(s, i);
+template <typename T> T get(const CpuState& s, u32 i) {
+    const typename Reg<T>::Bits b = Reg<T>::raw(s, i);
     T v;
     std::memcpy(&v, &b, sizeof(v));
     return v;
 }
 
-template <typename T>
-void set(CpuState& s, u32 i, T v) {
-    typename Fp<T>::Bits b;
+template <typename T> void set(CpuState& s, u32 i, T v) {
+    typename Reg<T>::Bits b;
     std::memcpy(&b, &v, sizeof(v));
-    Fp<T>::set_raw(s, i, b);
+    Reg<T>::set_raw(s, i, b);
 }
 
-// Conversion flottant -> entier avec saturation, comme le fait le matériel.
-// rmode : 0 au plus proche, 1 vers +inf, 2 vers -inf, 3 vers zéro.
+// Instructions de calcul. d, n, m : numéros de registres dans la précision T ;
+// sm, sd : numéros simple précision (pour les conversions avec les entiers).
 template <typename T>
-u32 to_int(T value, bool is_signed, u32 rmode) {
-    if (std::isnan(value)) return 0;
-    double v = static_cast<double>(value);
-    switch (rmode) {
-        case 0: v = std::nearbyint(v); break;
-        case 1: v = std::ceil(v); break;
-        case 2: v = std::floor(v); break;
-        default: v = std::trunc(v); break;
-    }
-    if (is_signed) {
-        if (v >= 2147483647.0) return 0x7FFFFFFF;
-        if (v <= -2147483648.0) return 0x80000000;
-        return static_cast<u32>(static_cast<s32>(v));
-    }
-    if (v >= 4294967295.0) return 0xFFFFFFFF;
-    if (v <= 0.0) return 0;
-    return static_cast<u32>(v);
-}
-
-// VCMP : place le résultat de la comparaison dans les drapeaux NZCV du FPSCR.
-template <typename T>
-void compare(CpuState& s, T a, T b) {
-    u32 nzcv;
-    if (std::isnan(a) || std::isnan(b)) nzcv = 0x3;  // non ordonnés : C et V
-    else if (a == b) nzcv = 0x6;                     // égaux : Z et C
-    else if (a < b) nzcv = 0x8;                      // inférieur : N
-    else nzcv = 0x2;                                 // supérieur : C
-    s.fpscr = (s.fpscr & 0x0FFFFFFF) | (nzcv << 28);
-}
-
-// Instructions de calcul. d, n, m sont des numéros de registres dans la précision T.
-// Renvoie false si l'encodage n'est pas pris en charge.
-template <typename T>
-bool arith(CpuState& s, u32 instr, u32 d, u32 n, u32 m, u32 sm, u32 sd) {
-    using F = Fp<T>;
+bool arith(CpuState& s, fp::Ctx& c, u32 instr, u32 d, u32 n, u32 m, u32 sm, u32 sd) {
     const u32 opc1 = (bit(instr, 23) << 3) | bits(instr, 21, 20);
     const bool op6 = bit(instr, 6);
     const T vn = get<T>(s, n), vm = get<T>(s, m), vd = get<T>(s, d);
-    const T product = vn * vm;  // arrondi avant l'addition : VMLA n'est pas fusionnée
 
     switch (opc1) {
-        case 0x0: set<T>(s, d, op6 ? vd - product : vd + product); return true;   // VMLA / VMLS
-        case 0x1: set<T>(s, d, op6 ? -vd - product : -vd + product); return true; // VNMLA / VNMLS
-        case 0x2: set<T>(s, d, op6 ? -product : product); return true;            // VNMUL / VMUL
-        case 0x3: set<T>(s, d, op6 ? vn - vm : vn + vm); return true;             // VSUB / VADD
-        case 0x8:                                                                  // VDIV
+        case 0x0: {  // VMLA / VMLS : produit arrondi, puis addition (pas de fusion)
+            const T p = fp::mul(vn, vm, c);
+            set<T>(s, d, fp::add(vd, op6 ? fp::neg(p) : p, c));
+            return true;
+        }
+        case 0x1: {  // VNMLS / VNMLA
+            const T p = fp::mul(vn, vm, c);
+            set<T>(s, d, fp::add(fp::neg(vd), op6 ? fp::neg(p) : p, c));
+            return true;
+        }
+        case 0x2: {  // VMUL / VNMUL
+            const T p = fp::mul(vn, vm, c);
+            set<T>(s, d, op6 ? fp::neg(p) : p);
+            return true;
+        }
+        case 0x3: set<T>(s, d, op6 ? fp::sub(vn, vm, c) : fp::add(vn, vm, c)); return true;  // VSUB / VADD
+        case 0x8:                                                                               // VDIV
             if (op6) return false;
-            set<T>(s, d, vn / vm);
+            set<T>(s, d, fp::div(vn, vm, c));
             return true;
         case 0xB: break;
         default: return false;  // VFMA, VFNMA... (VFPv4, absentes du Cortex-A9)
     }
 
     if (!op6) {  // VMOV (immédiat)
-        F::set_raw(s, d, F::expand_imm((bits(instr, 19, 16) << 4) | bits(instr, 3, 0)));
+        Reg<T>::set_raw(s, d, Reg<T>::expand_imm((bits(instr, 19, 16) << 4) | bits(instr, 3, 0)));
         return true;
     }
     const bool b7 = bit(instr, 7);
-    switch (bits(instr, 19, 16)) {
-        case 0x0:  // VMOV (registre) / VABS
-            F::set_raw(s, d, b7 ? F::raw(s, m) & ~F::kSign : F::raw(s, m));
-            return true;
-        case 0x1:  // VNEG / VSQRT
-            if (b7) set<T>(s, d, std::sqrt(vm));
-            else F::set_raw(s, d, F::raw(s, m) ^ F::kSign);
-            return true;
-        case 0x4: compare<T>(s, vd, vm); return true;          // VCMP / VCMPE
-        case 0x5: compare<T>(s, vd, T(0)); return true;        // VCMP avec zéro
-        case 0x8: {                                            // VCVT entier (Sm) -> flottant
-            const u32 v = get_s(s, sm);
-            set<T>(s, d, b7 ? static_cast<T>(static_cast<s32>(v)) : static_cast<T>(v));
+    const u32 opc2 = bits(instr, 19, 16);
+    switch (opc2) {
+        case 0x0: set<T>(s, d, b7 ? fp::abs(vm) : vm); return true;              // VABS / VMOV (registre)
+        case 0x1: set<T>(s, d, b7 ? fp::sqrt(vm, c) : fp::neg(vm)); return true; // VSQRT / VNEG
+        case 0x4: case 0x5: {                                                    // VCMP / VCMPE (avec zéro si 0x5)
+            const u32 nzcv = fp::compare(vd, opc2 == 0x5 ? T(0) : vm, b7, c);
+            s.fpscr = (s.fpscr & 0x0FFFFFFF) | (nzcv << 28);
             return true;
         }
-        case 0xC: case 0xD: {                                  // VCVT flottant -> entier (Sd)
-            const u32 rmode = b7 ? 3 : bits(s.fpscr, 23, 22);  // VCVT tronque, VCVTR suit le FPSCR
-            set_s(s, sd, to_int<T>(vm, bit(instr, 16), rmode));
+        case 0x8:  // VCVT entier (Sm) -> flottant
+            set<T>(s, d, fp::from_int<T>(get_s(s, sm), b7, c));
+            return true;
+        case 0xC: case 0xD:  // VCVT (troncature) / VCVTR (mode du FPSCR) flottant -> entier (Sd)
+            set_s(s, sd, fp::to_int(vm, opc2 == 0xD, b7 ? fp::kZero : c.rmode, c));
+            return true;
+        case 0xA: case 0xB: case 0xE: case 0xF: {  // VCVT virgule fixe, sur place dans Vd
+            const u32 size = b7 ? 32 : 16;
+            const u32 frac_bits = size - ((bits(instr, 3, 0) << 1) | bit(instr, 5));
+            const bool is_unsigned = bit(instr, 16);
+            if (bit(instr, 18)) {  // flottant -> virgule fixe (troncature)
+                const u64 v = fp::to_fixed(vd, size, frac_bits, is_unsigned, fp::kZero, c);
+                Reg<T>::set_raw(s, d, static_cast<typename Reg<T>::Bits>(v));
+            } else {               // virgule fixe -> flottant
+                set<T>(s, d, fp::from_fixed<T>(Reg<T>::raw(s, d), size, frac_bits, is_unsigned, c));
+            }
             return true;
         }
-        default: return false;  // virgule fixe, demi-précision
+        default: return false;
     }
 }
 
@@ -286,16 +261,32 @@ Interpreter::StepResult Interpreter::vfp_data_processing(u32 instr) {
     const u32 sd = (vd << 1) | D, sn = (vn << 1) | N, sm = (vm << 1) | M;
     const u32 dd = (D << 4) | vd, dn = (N << 4) | vn, dm = (M << 4) | vm;
 
-    // VCVT entre simple et double précision : les deux précisions dans la même instruction.
-    const bool other = (bit(instr, 23) && bits(instr, 21, 20) == 3 && bit(instr, 6));
-    if (other && bits(instr, 19, 16) == 0x7 && bit(instr, 7)) {
-        if (dp) set<float>(state_, sd, static_cast<float>(get<double>(state_, dm)));   // F32 <- F64
-        else set<double>(state_, dd, static_cast<double>(get<float>(state_, sm)));     // F64 <- F32
-        return StepResult::Ok;
-    }
+    fp::Ctx ctx = fp::Ctx::from_fpscr(state_.fpscr);
+    bool ok = true;
+    const bool other = bit(instr, 23) && bits(instr, 21, 20) == 3 && bit(instr, 6);
+    const u32 opc2 = bits(instr, 19, 16);
 
-    const bool ok = dp ? arith<double>(state_, instr, dd, dn, dm, sm, sd)
-                       : arith<float>(state_, instr, sd, sn, sm, sm, sd);
+    if (other && opc2 == 0x7 && bit(instr, 7)) {
+        // VCVT entre simple et double précision : les deux précisions dans la même instruction.
+        if (dp) set<float>(state_, sd, fp::to_single(get<double>(state_, dm), ctx));  // F32 <- F64
+        else set<double>(state_, dd, fp::to_double(get<float>(state_, sm), ctx));     // F64 <- F32
+    } else if (other && (opc2 == 0x2 || opc2 == 0x3)) {
+        // VCVTB / VCVTT : demi-précision dans la moitié basse (B) ou haute (T) de Sm / Sd.
+        if (dp) return StepResult::Undefined;
+        const bool top = bit(instr, 7);
+        if (opc2 == 0x2) {  // F32 <- F16
+            const u16 h = static_cast<u16>(top ? get_s(state_, sm) >> 16 : get_s(state_, sm));
+            set<float>(state_, sd, fp::from_half(h, ctx));
+        } else {            // F16 <- F32
+            const u32 h = fp::to_half(get<float>(state_, sm), ctx);
+            const u32 cur = get_s(state_, sd);
+            set_s(state_, sd, top ? (cur & 0xFFFF) | (h << 16) : (cur & 0xFFFF0000) | h);
+        }
+    } else {
+        ok = dp ? arith<double>(state_, ctx, instr, dd, dn, dm, sm, sd)
+                : arith<float>(state_, ctx, instr, sd, sn, sm, sm, sd);
+    }
+    state_.fpscr |= ctx.exceptions;  // drapeaux cumulés
     return ok ? StepResult::Ok : StepResult::Undefined;
 }
 

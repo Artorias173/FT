@@ -12,11 +12,14 @@ add_library(vita_core STATIC
     src/cpu/interpreter_arm.cpp
     src/cpu/interpreter_thumb.cpp
     src/cpu/interpreter_vfp.cpp
+    src/cpu/fp.cpp
     src/loader/elf_loader.cpp
     src/hle/kernel.cpp
     src/gpu/renderer.cpp
 )
 target_include_directories(vita_core PUBLIC include)
+# Les changements de mode d'arrondi de l'hôte doivent être respectés.
+set_source_files_properties(src/cpu/fp.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math")
 target_compile_options(vita_core PRIVATE -Wall -Wextra)
 
 find_package(Threads REQUIRED)
@@ -30,7 +33,7 @@ if(VITA_BUILD_TESTS AND NOT ANDROID)
     enable_testing()
     enable_language(C)
     # programs.c est aussi compilé nativement : il fournit les résultats attendus.
-    add_executable(vita_core_tests tests/core_tests.cpp tests/guest/programs.c)
+    add_executable(vita_core_tests tests/core_tests.cpp tests/fp_tests.cpp tests/guest/programs.c)
     target_link_libraries(vita_core_tests PRIVATE vita_core)
     add_test(NAME vita_core_tests COMMAND vita_core_tests)
 
